@@ -59,6 +59,10 @@ function createAsyncStorageDb(name: string): LocalDatabase {
       return [];
     },
 
+    queryOne: <T = Record<string, unknown>>(_sql: string, ..._params: unknown[]): T | null => {
+      return null;
+    },
+
     run: (_sql: string, ..._params: unknown[]) => {
       // No-op for AsyncStorage
     },

@@ -16,6 +16,7 @@ export interface PlatformAdapter {
 export interface LocalDatabase {
   exec(sql: string): void;
   query<T = Record<string, unknown>>(sql: string, ...params: unknown[]): T[];
+  queryOne<T = Record<string, unknown>>(sql: string, ...params: unknown[]): T | null;
   run(sql: string, ...params: unknown[]): void;
   close(): void;
 }
@@ -38,6 +39,8 @@ export function createNodeAdapter(): PlatformAdapter {
           exec: (sql: string) => db.run(sql),
           query: <T = Record<string, unknown>>(sql: string, ...params: unknown[]) =>
             db.query(sql).all(...params) as T[],
+          queryOne: <T = Record<string, unknown>>(sql: string, ...params: unknown[]) =>
+            (db.query(sql).get(...params) as T) ?? null,
           run: (sql: string, ...params: unknown[]) => db.run(sql, ...params),
           close: () => db.close(),
         };
@@ -48,6 +51,7 @@ export function createNodeAdapter(): PlatformAdapter {
         return {
           exec: (_sql: string) => {},
           query: <T = Record<string, unknown>>(_sql: string, ..._params: unknown[]) => [] as T[],
+          queryOne: <T = Record<string, unknown>>(_sql: string, ..._params: unknown[]) => null as T | null,
           run: (_sql: string, ..._params: unknown[]) => {},
           close: () => store.clear(),
         };

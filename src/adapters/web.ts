@@ -65,6 +65,10 @@ function createIndexedDb(name: string): LocalDatabase {
       return [];
     },
 
+    queryOne: <T = Record<string, unknown>>(sql: string, ...params: unknown[]): T | null => {
+      return null;
+    },
+
     run: (sql: string, ...params: unknown[]) => {
       // For writes, we'd need to parse the SQL
     },
