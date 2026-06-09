@@ -14,6 +14,8 @@ export {
   logout,
   getOAuth2Url,
   handleOAuth2Callback,
+  loginWithGoogle,
+  loginWithGitHub,
 } from "./auth";
 
 // ── Records ──
@@ -24,6 +26,7 @@ export {
   updateRecord,
   deleteRecord,
   getAllRecords,
+  batch,
 } from "./records";
 export type { RecordQuery, RecordListResult } from "./records";
 

@@ -52,7 +52,7 @@ ${fields}
 `.trim();
 }
 
-function toPascalCase(str: string): string {
+export function toPascalCase(str: string): string {
   return str
     .split(/[_-]/)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -156,4 +156,6 @@ ${collections.map((c) => `  "${c.name}": ${toPascalCase(c.name)};`).join("\n")}
   }
 }
 
-main();
+if (import.meta.main) {
+  main();
+}

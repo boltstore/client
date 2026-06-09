@@ -10,7 +10,9 @@ import type { PlatformAdapter, LocalDatabase } from "./node";
 export function createWebAdapter(): PlatformAdapter {
   return {
     name: "web",
-    fetch: window.fetch.bind(window),
+    fetch: (typeof window !== "undefined" ? window.fetch : globalThis.fetch).bind(
+      typeof window !== "undefined" ? window : globalThis
+    ),
     createWebSocket: (url: string) => new WebSocket(url),
     createLocalDb: (name: string) => createIndexedDb(name),
   };
@@ -27,6 +29,11 @@ function createIndexedDb(name: string): LocalDatabase {
   let initPromise: Promise<void>;
 
   initPromise = new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      // Fallback: return a minimal in-memory db when IndexedDB is not available
+      resolve();
+      return;
+    }
     const request = indexedDB.open(name, 1);
 
     request.onupgradeneeded = () => {

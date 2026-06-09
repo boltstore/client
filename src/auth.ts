@@ -139,3 +139,25 @@ export async function handleOAuth2Callback(
   client.setAuth(state);
   return state;
 }
+
+/**
+ * Start a Google OAuth2 login flow.
+ * Returns the authorization URL. In a browser, redirect the user to this URL.
+ */
+export function loginWithGoogle(
+  client: BoltstoreClient,
+  redirectUri: string
+): string {
+  return getOAuth2Url(client, "google", redirectUri);
+}
+
+/**
+ * Start a GitHub OAuth2 login flow.
+ * Returns the authorization URL. In a browser, redirect the user to this URL.
+ */
+export function loginWithGitHub(
+  client: BoltstoreClient,
+  redirectUri: string
+): string {
+  return getOAuth2Url(client, "github", redirectUri);
+}

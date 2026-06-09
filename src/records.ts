@@ -23,6 +23,38 @@ export interface RecordListResult {
   totalPages: number;
 }
 
+// ── Batch Operations ──
+
+import type { BatchOperation, BatchResult } from "@boltstore/shared";
+
+/**
+ * Execute multiple record operations in a single request.
+ *
+ * @example
+ * const result = await batch(client, [
+ *   { method: "POST", collection: "todos", data: { title: "A" } },
+ *   { method: "POST", collection: "todos", data: { title: "B" } },
+ *   { method: "PATCH", collection: "todos", id: "existing-id", data: { done: true } },
+ *   { method: "DELETE", collection: "todos", id: "old-id" },
+ * ]);
+ */
+export async function batch(
+  client: BoltstoreClient,
+  operations: BatchOperation[],
+  options?: { transactional?: boolean }
+): Promise<BatchResult["results"]> {
+  const result = await client.post<BatchResult>("/api/batch", {
+    operations,
+    transactional: options?.transactional ?? false,
+  });
+
+  if (!result.success || !result.data) {
+    throw new Error(result.error?.message ?? "Batch operation failed");
+  }
+
+  return result.data.results;
+}
+
 // ── CRUD Operations ──
 
 /**
