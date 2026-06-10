@@ -8,7 +8,7 @@ import type { PlatformAdapter, LocalDatabase } from "./node";
  * React Native adapter — uses AsyncStorage for offline storage.
  *
  * Note: Requires react-native and @react-native-async-storage/async-storage
- * to be installed in the project.
+ * to be installed in the application.
  */
 export function createReactNativeAdapter(): PlatformAdapter {
   return {
