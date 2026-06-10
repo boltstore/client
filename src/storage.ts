@@ -15,34 +15,50 @@ import type { UploadResponse, FileInfo } from "@boltstore/shared";
  *   recordId: "rec_abc",
  *   field: "image",
  * });
+ *
+ * @example
+ * // Upload to a specific folder in the file browser
+ * const file = await uploadFile(client, imageFile, {
+ *   projectId: "proj_123",
+ *   folder: "avatars",
+ *   filename: "photo.png",
+ * });
  */
 export async function uploadFile(
   client: BoltstoreClient,
   file: File | Blob,
   options: {
     projectId: string;
-    collection: string;
-    recordId: string;
-    field: string;
+    collection?: string;
+    recordId?: string;
+    field?: string;
+    folder?: string;
     filename?: string;
   }
 ): Promise<UploadResponse> {
+  const baseUrl = (client as any).config?.url ?? "";
+  const token = (client as any).authState?.token;
+
+  let url = `${baseUrl}/api/files/upload`;
+  // If a folder is specified, pass it as a query param for the file browser upload path
+  // Otherwise the server reads collection/recordId from form data below
+  if (options.folder) {
+    url += `?folder=${encodeURIComponent(options.folder)}`;
+  }
+
   const formData = new FormData();
   formData.append("file", file, options.filename ?? (file as File).name ?? "upload");
   formData.append("projectId", options.projectId);
-  formData.append("collection", options.collection);
-  formData.append("recordId", options.recordId);
-  formData.append("field", options.field);
-
-  const baseUrl = (client as any).config?.url ?? "";
-  const token = (client as any).authState?.token;
+  if (options.collection) formData.append("collection", options.collection);
+  if (options.recordId) formData.append("recordId", options.recordId);
+  if (options.field) formData.append("field", options.field);
 
   const headers: Record<string, string> = {};
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${baseUrl}/api/files/upload`, {
+  const response = await fetch(url, {
     method: "POST",
     headers,
     body: formData,
@@ -108,6 +124,20 @@ export async function getSignedUrl(
   }
 
   return result.data.url;
+}
+
+/**
+ * List files for the current project.
+ * Requires X-Project-Id to be set on the client.
+ */
+export async function listFiles(
+  client: BoltstoreClient
+): Promise<FileInfo[]> {
+  const result = await client.get<FileInfo[]>(`/api/files`);
+  if (!result.success || !result.data) {
+    throw new Error(result.error?.message ?? "Failed to list files");
+  }
+  return result.data;
 }
 
 /**

@@ -54,6 +54,7 @@ export {
   getFileUrl,
   getSignedUrl,
   deleteFile,
+  listFiles,
 } from "./storage";
 
 // ── Adapters ──
