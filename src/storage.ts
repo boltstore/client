@@ -39,19 +39,16 @@ export async function uploadFile(
   const baseUrl = (client as any).config?.url ?? "";
   const token = (client as any).authState?.token;
 
-  let url = `${baseUrl}/api/files/upload`;
-  // If a folder is specified, pass it as a query param for the file browser upload path
-  // Otherwise the server reads collection/recordId from form data below
-  if (options.folder) {
-    url += `?folder=${encodeURIComponent(options.folder)}`;
-  }
+  const queryParams = new URLSearchParams();
+  queryParams.set("project", options.projectId);
+  if (options.folder) queryParams.set("folder", options.folder);
+  if (options.collection) queryParams.set("collection", options.collection);
+  if (options.recordId) queryParams.set("recordId", options.recordId);
+  if (options.field) queryParams.set("field", options.field);
+  const url = `${baseUrl}/api/files/upload?${queryParams.toString()}`;
 
   const formData = new FormData();
   formData.append("file", file, options.filename ?? (file as File).name ?? "upload");
-  formData.append("projectId", options.projectId);
-  if (options.collection) formData.append("collection", options.collection);
-  if (options.recordId) formData.append("recordId", options.recordId);
-  if (options.field) formData.append("field", options.field);
 
   const headers: Record<string, string> = {};
   if (token) {
@@ -133,11 +130,11 @@ export async function getSignedUrl(
 export async function listFiles(
   client: BoltstoreClient
 ): Promise<FileInfo[]> {
-  const result = await client.get<FileInfo[]>(`/api/files`);
+  const result = await client.get<{ files: FileInfo[]; folders: string[] }>(`/api/files`);
   if (!result.success || !result.data) {
     throw new Error(result.error?.message ?? "Failed to list files");
   }
-  return result.data;
+  return result.data.files;
 }
 
 /**

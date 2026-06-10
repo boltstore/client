@@ -284,7 +284,8 @@ export class SyncEngine {
     this.setConnectionState("connecting");
 
     const baseUrl = (this.client as any).config?.url ?? "";
-    const wsUrl = baseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:") + "/ws";
+    const token = (this.client as any).authState?.token ?? "";
+    const wsUrl = baseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:") + "/ws" + (token ? `?token=${encodeURIComponent(token)}` : "");
 
     try {
       this.ws = new WebSocket(wsUrl);
