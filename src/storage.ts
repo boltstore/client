@@ -10,7 +10,7 @@ import type { UploadResponse, FileInfo } from "@boltstore/shared";
  * @example
  * const file = await uploadFile(client, {
  *   file: imageFile,
- *   projectId: "proj_123",
+ *   applicationId: "proj_123",
  *   collection: "photos",
  *   recordId: "rec_abc",
  *   field: "image",
@@ -19,7 +19,7 @@ import type { UploadResponse, FileInfo } from "@boltstore/shared";
  * @example
  * // Upload to a specific folder in the file browser
  * const file = await uploadFile(client, imageFile, {
- *   projectId: "proj_123",
+ *   applicationId: "proj_123",
  *   folder: "avatars",
  *   filename: "photo.png",
  * });
@@ -28,7 +28,7 @@ export async function uploadFile(
   client: BoltstoreClient,
   file: File | Blob,
   options: {
-    projectId: string;
+    applicationId: string;
     collection?: string;
     recordId?: string;
     field?: string;
@@ -40,7 +40,7 @@ export async function uploadFile(
   const token = (client as any).authState?.token;
 
   const queryParams = new URLSearchParams();
-  queryParams.set("project", options.projectId);
+  queryParams.set("application", options.applicationId);
   if (options.folder) queryParams.set("folder", options.folder);
   if (options.collection) queryParams.set("collection", options.collection);
   if (options.recordId) queryParams.set("recordId", options.recordId);
@@ -124,8 +124,8 @@ export async function getSignedUrl(
 }
 
 /**
- * List files for the current project.
- * Requires X-Project-Id to be set on the client.
+ * List files for the current application.
+ * Requires X-Application-Id to be set on the client.
  */
 export async function listFiles(
   client: BoltstoreClient

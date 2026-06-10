@@ -10,7 +10,7 @@ export interface ClientConfig {
   /** Base URL of the Boltstore server */
   url: string;
   /** Application ID (if scoping to a single application) */
-  projectId?: string;
+  applicationId?: string;
   /** Request timeout in ms (default: 30s) */
   timeout?: number;
   /** Auto-refresh tokens before expiry */
@@ -103,9 +103,9 @@ export class BoltstoreClient {
       headers["Authorization"] = `Bearer ${this.authState.token}`;
     }
 
-    // Add project header
-    if (this.config.projectId) {
-      headers["X-Project-Id"] = this.config.projectId;
+    // Add application header
+    if (this.config.applicationId) {
+      headers["X-Application-Id"] = this.config.applicationId;
     }
 
     const controller = new AbortController();

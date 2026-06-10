@@ -5,7 +5,7 @@ import type { BoltstoreClient } from "./client";
 import type { CollectionSchema } from "@boltstore/shared";
 
 /**
- * List all collections for the current project.
+ * List all collections for the current application.
  */
 export async function listCollections(
   client: BoltstoreClient

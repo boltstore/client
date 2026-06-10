@@ -69,7 +69,7 @@ export type {
   CollectionSchema,
   FieldSchema,
   BoltstoreUser,
-  BoltstoreProject,
+  BoltstoreApplication,
   ApiResponse,
   PaginatedResponse,
   BatchOperation,
