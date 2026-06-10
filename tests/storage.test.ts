@@ -10,8 +10,8 @@ describe("Storage Module", () => {
   describe("getFileUrl", () => {
     it("should return a file download URL", () => {
       const client = createMockClient();
-      const url = getFileUrl(client, "projects/proj_1/photo.jpg");
-      expect(url).toBe("http://localhost:8090/api/files/projects%2Fproj_1%2Fphoto.jpg");
+      const url = getFileUrl(client, "applications/proj_1/photo.jpg");
+      expect(url).toBe("http://localhost:8090/api/files/applications%2Fproj_1%2Fphoto.jpg");
     });
   });
 
