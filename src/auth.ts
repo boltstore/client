@@ -101,6 +101,68 @@ export async function logout(client: BoltstoreClient): Promise<void> {
 }
 
 /**
+ * Admin login with email and password.
+ */
+export async function adminLogin(
+  client: BoltstoreClient,
+  credentials: LoginRequest
+): Promise<AuthState> {
+  const result = await client.request<LoginResponse>("/api/auth/admin/login", {
+    method: "POST",
+    body: credentials,
+  });
+
+  if (!result.success || !result.data) {
+    throw new Error(result.error?.message ?? "Admin login failed");
+  }
+
+  const state: AuthState = {
+    token: result.data.accessToken,
+    refreshToken: result.data.refreshToken,
+    expiresAt: result.data.expiresAt * 1000,
+    user: result.data.user,
+  };
+
+  client.setAuth(state);
+  return state;
+}
+
+/**
+ * Refresh the admin access token.
+ */
+export async function adminRefresh(
+  client: BoltstoreClient,
+  refreshToken: string
+): Promise<AuthState> {
+  const result = await client.request<RefreshResponse>("/api/auth/admin/refresh", {
+    method: "POST",
+    body: { refreshToken },
+  });
+
+  if (!result.success || !result.data) {
+    client.clearAuth();
+    throw new Error(result.error?.message ?? "Admin token refresh failed");
+  }
+
+  const state: AuthState = {
+    token: result.data.accessToken,
+    refreshToken: result.data.refreshToken,
+    expiresAt: result.data.expiresAt * 1000,
+  };
+
+  client.setAuth(state);
+  return state;
+}
+
+/**
+ * Admin logout — invalidate the admin refresh token.
+ */
+export async function adminLogout(client: BoltstoreClient): Promise<void> {
+  await client.request("/api/auth/admin/logout", { method: "POST" });
+  client.clearAuth();
+}
+
+/**
  * Get the OAuth2 authorization URL for a provider.
  * Redirect the user to this URL to start the OAuth2 flow.
  */

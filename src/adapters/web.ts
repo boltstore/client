@@ -93,11 +93,11 @@ function createIndexedDb(name: string): LocalDatabase {
 /**
  * Auto-detect the platform and return the appropriate adapter.
  */
-export function autoDetectAdapter(): PlatformAdapter {
+export async function autoDetectAdapter(): Promise<PlatformAdapter> {
   if (typeof window !== "undefined" && typeof indexedDB !== "undefined") {
     return createWebAdapter();
   }
   // Fall back to Node adapter
-  const { createNodeAdapter } = require("./node");
+  const { createNodeAdapter } = await import("./node");
   return createNodeAdapter();
 }

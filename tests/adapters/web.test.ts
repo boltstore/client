@@ -26,11 +26,11 @@ describe("Web Adapter", () => {
   });
 
   describe("autoDetectAdapter", () => {
-    it("should detect web adapter when window and indexedDB exist", () => {
+    it("should detect web adapter when window and indexedDB exist", async () => {
       // In Bun test environment, window/indexedDB are not defined
-      // so autoDetectAdapter falls back to node adapter via require
+      // so autoDetectAdapter falls back to node adapter via dynamic import
       try {
-        const adapter = autoDetectAdapter();
+        const adapter = await autoDetectAdapter();
         expect(adapter.name).toBeDefined();
         expect(adapter.fetch).toBeDefined();
       } catch {

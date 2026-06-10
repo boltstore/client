@@ -2,7 +2,7 @@
 // Main client class. Configures the connection, manages auth state,
 // and provides helpers for making API requests.
 
-import type { ApiResponse, PaginationParams } from "@boltstore/shared";
+import type { ApiResponse } from "@boltstore/shared";
 import type { LoginResponse, RefreshResponse } from "@boltstore/shared/auth-types";
 import type { PlatformAdapter } from "./adapters/node";
 
@@ -58,7 +58,9 @@ export class BoltstoreClient {
   }
 
   get token(): string | null {
-    return this.authState?.token ?? null;
+    if (!this.authState) return null;
+    if (this.authState.expiresAt <= Date.now()) return null;
+    return this.authState.token;
   }
 
   setAuth(state: AuthState): void {
@@ -128,7 +130,17 @@ export class BoltstoreClient {
 
       // Handle authentication errors
       if (response.status === 401 && json.error?.code === "token_expired") {
+        const refreshToken = this.authState?.refreshToken;
         this.clearAuth();
+        if (refreshToken) {
+          try {
+            await this.refreshToken(refreshToken);
+            // Retry once with fresh token
+            return this.request<T>(path, options);
+          } catch {
+            // Refresh failed — propagate the original error
+          }
+        }
       }
 
       return json;
@@ -163,12 +175,13 @@ export class BoltstoreClient {
     }, refreshIn);
   }
 
-  private async refreshToken(): Promise<void> {
-    if (!this.authState?.refreshToken) return;
+  private async refreshToken(refreshToken?: string): Promise<void> {
+    const token = refreshToken ?? this.authState?.refreshToken;
+    if (!token) return;
 
     const result = await this.request<RefreshResponse>("/api/auth/refresh", {
       method: "POST",
-      body: { refreshToken: this.authState.refreshToken },
+      body: { refreshToken: token },
     });
 
     if (result.success && result.data) {
@@ -176,8 +189,41 @@ export class BoltstoreClient {
         token: result.data.accessToken,
         refreshToken: result.data.refreshToken,
         expiresAt: result.data.expiresAt * 1000,
-        user: this.authState.user,
+        user: this.authState?.user,
       });
+    }
+  }
+
+  // ── Raw fetch (for uploads, etc.) ──
+
+  async fetch(url: string, options: RequestInit = {}): Promise<Response> {
+    const headers = new Headers(options.headers ?? {});
+
+    if (this.authState?.token) {
+      headers.set("Authorization", `Bearer ${this.authState.token}`);
+    }
+
+    if (this.config.applicationId) {
+      headers.set("X-Application-Id", this.config.applicationId);
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new Error(`Request timed out after ${this.config.timeout}ms`);
+      }
+      throw err;
     }
   }
 

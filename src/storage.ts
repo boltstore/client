@@ -36,6 +36,8 @@ export async function uploadFile(
     filename?: string;
   }
 ): Promise<UploadResponse> {
+  // Note: React Native uses its own File/FormData implementation.
+  // Ensure the platform polyfills these globals before calling uploadFile.
   const baseUrl = (client as any).config?.url ?? "";
   const token = (client as any).authState?.token;
 
@@ -55,7 +57,7 @@ export async function uploadFile(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
+  const response = await client.fetch(url, {
     method: "POST",
     headers,
     body: formData,
@@ -147,5 +149,95 @@ export async function deleteFile(
   const result = await client.delete(`/api/files/${encodeURIComponent(key)}`);
   if (!result.success) {
     throw new Error(result.error?.message ?? "Failed to delete file");
+  }
+}
+
+/**
+ * Get metadata for a single file.
+ */
+export async function getFileInfo(
+  client: BoltstoreClient,
+  key: string
+): Promise<FileInfo> {
+  const result = await client.get<{ file: FileInfo }>(`/api/files/${encodeURIComponent(key)}`);
+  if (!result.success || !result.data) {
+    throw new Error(result.error?.message ?? "Failed to get file info");
+  }
+  return result.data.file;
+}
+
+/**
+ * Update a file's metadata.
+ */
+export async function updateFile(
+  client: BoltstoreClient,
+  key: string,
+  metadata: Partial<FileInfo>
+): Promise<FileInfo> {
+  const result = await client.patch<{ file: FileInfo }>(`/api/files/${encodeURIComponent(key)}`, metadata);
+  if (!result.success || !result.data) {
+    throw new Error(result.error?.message ?? "Failed to update file");
+  }
+  return result.data.file;
+}
+
+/**
+ * Create a new folder.
+ */
+export async function createFolder(
+  client: BoltstoreClient,
+  options: {
+    applicationId: string;
+    name: string;
+    path?: string;
+    parent?: string;
+  }
+): Promise<{ id: string; name: string; path: string }> {
+  const result = await client.post<{ folder: { id: string; name: string; path: string } }>("/api/files/folders", options);
+  if (!result.success || !result.data) {
+    throw new Error(result.error?.message ?? "Failed to create folder");
+  }
+  return result.data.folder;
+}
+
+/**
+ * Get folder configuration.
+ */
+export async function getFolderConfig(
+  client: BoltstoreClient,
+  folderId: string
+): Promise<{ id: string; name: string; path: string; permissions?: Record<string, unknown> }> {
+  const result = await client.get<{ folder: { id: string; name: string; path: string; permissions?: Record<string, unknown> } }>(`/api/files/folders/${encodeURIComponent(folderId)}`);
+  if (!result.success || !result.data) {
+    throw new Error(result.error?.message ?? "Failed to get folder config");
+  }
+  return result.data.folder;
+}
+
+/**
+ * Update folder configuration.
+ */
+export async function updateFolderConfig(
+  client: BoltstoreClient,
+  folderId: string,
+  config: { name?: string; permissions?: Record<string, unknown> }
+): Promise<{ id: string; name: string; path: string }> {
+  const result = await client.patch<{ folder: { id: string; name: string; path: string } }>(`/api/files/folders/${encodeURIComponent(folderId)}`, config);
+  if (!result.success || !result.data) {
+    throw new Error(result.error?.message ?? "Failed to update folder config");
+  }
+  return result.data.folder;
+}
+
+/**
+ * Delete a folder.
+ */
+export async function deleteFolder(
+  client: BoltstoreClient,
+  folderId: string
+): Promise<void> {
+  const result = await client.delete(`/api/files/folders/${encodeURIComponent(folderId)}`);
+  if (!result.success) {
+    throw new Error(result.error?.message ?? "Failed to delete folder");
   }
 }

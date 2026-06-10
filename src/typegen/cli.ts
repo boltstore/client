@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // ── TypeGen CLI ──
 // Reads the collection schema from a Boltstore server and generates TypeScript
 // type definitions (.d.ts) for all collections.
@@ -6,6 +6,7 @@
 // Usage: boltstore typegen [options]
 
 import { parseArgs } from "node:util";
+import { writeFileSync } from "node:fs";
 import type { CollectionSchema, FieldSchema, FieldType } from "@boltstore/shared";
 
 // ── Type Mapping ──
@@ -86,7 +87,7 @@ async function fetchSchemas(url: string, apiKey?: string): Promise<CollectionSch
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
-    args: Bun.argv.slice(2),
+    args: process.argv.slice(2),
     options: {
       url: { type: "string", default: "http://localhost:8090" },
       output: { type: "string", default: "boltstore.d.ts" },
@@ -148,7 +149,7 @@ ${collections.map((c) => `  "${c.name}": ${toPascalCase(c.name)};`).join("\n")}
 
     const output = header + types + footer;
 
-    await Bun.write(values.output!, output);
+    writeFileSync(values.output!, output, "utf-8");
     console.log(`✅ Generated ${collections.length} types → ${values.output}`);
   } catch (err) {
     console.error(`❌ ${err instanceof Error ? err.message : err}`);
