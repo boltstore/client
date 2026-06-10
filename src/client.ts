@@ -9,7 +9,7 @@ import type { PlatformAdapter } from "./adapters/node";
 export interface ClientConfig {
   /** Base URL of the Boltstore server */
   url: string;
-  /** Project ID (if scoping to a single project) */
+  /** Application ID (if scoping to a single application) */
   projectId?: string;
   /** Request timeout in ms (default: 30s) */
   timeout?: number;
