@@ -41,5 +41,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/boltstore/client"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
