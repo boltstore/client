@@ -113,7 +113,7 @@ export class RealtimeClient {
    * Subscribe to events on a table (collection).
    *
    * @example
-   * const unsub = realtime.subscribe("table:proj_123:todos", (event) => {
+   * const unsub = realtime.subscribe("table:app_123:todos", (event) => {
    *   console.log(event.type, event.record);
    * });
    */
@@ -179,8 +179,8 @@ export function connectRealtime(client: BoltstoreClient): RealtimeClient {
 
 /**
  * Simple topic matching.
- * "table:proj:collection" matches events for that collection.
- * "row:proj:collection:id" matches events for that specific record.
+ * "table:app:collection" matches events for that collection.
+ * "row:app:collection:id" matches events for that specific record.
  */
 function topicMatches(topic: string, collection: string, record: Record<string, unknown>): boolean {
   const parts = topic.split(":");

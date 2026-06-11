@@ -17,7 +17,7 @@ describe("Realtime Module", () => {
 
       // Can't actually connect in tests, but we can test subscribe/unsubscribe logic
       // by mocking the ws state
-      const unsub = rt.subscribe("table:proj:todos", () => {});
+      const unsub = rt.subscribe("table:app:todos", () => {});
       expect(typeof unsub).toBe("function");
 
       // Unsubscribe should not throw

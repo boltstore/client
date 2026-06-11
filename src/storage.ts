@@ -10,7 +10,7 @@ import type { UploadResponse, FileInfo } from "@boltstore/shared";
  * @example
  * const file = await uploadFile(client, {
  *   file: imageFile,
- *   applicationId: "proj_123",
+ *   applicationId: "app_123",
  *   collection: "photos",
  *   recordId: "rec_abc",
  *   field: "image",
@@ -19,7 +19,7 @@ import type { UploadResponse, FileInfo } from "@boltstore/shared";
  * @example
  * // Upload to a specific folder in the file browser
  * const file = await uploadFile(client, imageFile, {
- *   applicationId: "proj_123",
+ *   applicationId: "app_123",
  *   folder: "avatars",
  *   filename: "photo.png",
  * });

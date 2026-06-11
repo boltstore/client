@@ -2,12 +2,12 @@
 
 TypeScript SDK for Boltstore. Works in Bun, Node 18+, browsers, and React Native.
 
-**Zero npm dependencies** (only `@boltstore/shared` for types).
+**Zero external dependencies** (only `@boltstore/utils` for types).
 
 ## Installation
 
 ```bash
-npm install @boltstore/client @boltstore/shared
+npm install @boltstore/client
 ```
 
 ## Quick Start
@@ -72,7 +72,7 @@ import { connectRealtime } from "@boltstore/client";
 
 const rt = connectRealtime(client);
 
-const unsub = rt.subscribe("table:proj_123:todos", (event) => {
+const unsub = rt.subscribe("table:app_123:todos", (event) => {
   console.log(`${event.type}:`, event.record);
 });
 
