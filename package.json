@@ -1,6 +1,6 @@
 {
   "name": "@boltstore/client",
-  "version": "0.5.0",
+  "version": "0.5.2",
   "description": "TypeScript SDK for Boltstore \u2014 works in Bun, Node 18+, browsers, React Native",
   "type": "module",
   "main": "./src/index.ts",

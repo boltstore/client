@@ -13,6 +13,8 @@ export interface RecordQuery extends PaginationParams {
   perPage?: number;
   expand?: string;
   search?: string;
+  fields?: string;
+  cursor?: string;
 }
 
 export interface RecordListResult {
@@ -21,6 +23,8 @@ export interface RecordListResult {
   perPage: number;
   totalItems: number;
   totalPages: number;
+  hasNextPage?: boolean;
+  nextCursor?: string;
 }
 
 // ── Batch Operations ──
@@ -55,6 +59,91 @@ export async function batch(
   return result.data.results;
 }
 
+// ── Aggregate ──
+
+export interface AggregateQuery {
+  groupBy?: string | string[];
+  aggregate?: "count" | "sum" | "avg" | "min" | "max";
+  aggregateField?: string;
+  filter?: string;
+  sort?: string;
+  limit?: number;
+}
+
+export interface AggregateResult {
+  items: Record<string, unknown>[];
+  groupBy: string[];
+  aggregate?: string;
+  total?: number;
+}
+
+/**
+ * Aggregate records (GROUP BY / COUNT / SUM / AVG / MIN / MAX).
+ *
+ * @example
+ * const result = await aggregateRecords(client, "jobs", {
+ *   groupBy: "company",
+ *   aggregate: "count",
+ *   sort: "-total",
+ * });
+ */
+export async function aggregateRecords(
+  client: BoltstoreClient,
+  collection: string,
+  query?: AggregateQuery
+): Promise<AggregateResult> {
+  const params: Record<string, string> = {};
+
+  if (query?.groupBy) {
+    params.groupBy = Array.isArray(query.groupBy)
+      ? query.groupBy.join(",")
+      : query.groupBy;
+  }
+  if (query?.aggregate) params.aggregate = query.aggregate;
+  if (query?.aggregateField) params.aggregateField = query.aggregateField;
+  if (query?.filter) params.filter = query.filter;
+  if (query?.sort) params.sort = query.sort;
+  if (query?.limit) params.limit = String(query.limit);
+
+  const result = await client.get<AggregateResult>(
+    `/api/collections/${collection}/aggregate`,
+    params
+  );
+
+  if (!result.success || !result.data) {
+    throw new Error(result.error?.message ?? "Failed to aggregate records");
+  }
+
+  return result.data;
+}
+
+/**
+ * Bulk create multiple records in a single request.
+ * Uses the bulk array endpoint (more efficient than batch API).
+ *
+ * @example
+ * const created = await bulkCreateRecords(client, "todos", [
+ *   { title: "A" },
+ *   { title: "B" },
+ * ]);
+ */
+export async function bulkCreateRecords(
+  client: BoltstoreClient,
+  collection: string,
+  records: Record<string, unknown>[]
+): Promise<RecordData[]> {
+  const result = await client.post<RecordData[]>(
+    `/api/collections/${collection}/records`,
+    records
+  );
+
+  if (!result.success || !result.data) {
+    throw new Error(result.error?.message ?? "Failed to bulk create records");
+  }
+
+  return result.data;
+}
+
 // ── CRUD Operations ──
 
 /**
@@ -80,6 +169,8 @@ export async function listRecords(
   if (query?.perPage) params.perPage = String(query.perPage);
   if (query?.expand) params.expand = query.expand;
   if (query?.search) params.search = query.search;
+  if (query?.fields) params.fields = query.fields;
+  if (query?.cursor) params.cursor = query.cursor;
 
   const result = await client.get<RecordListResult>(
     `/api/collections/${collection}/records`,

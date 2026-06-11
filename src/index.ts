@@ -27,8 +27,10 @@ export {
   deleteRecord,
   getAllRecords,
   batch,
+  aggregateRecords,
+  bulkCreateRecords,
 } from "./records";
-export type { RecordQuery, RecordListResult } from "./records";
+export type { RecordQuery, RecordListResult, AggregateQuery, AggregateResult } from "./records";
 
 // ── Collections ──
 export {
