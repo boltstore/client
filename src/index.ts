@@ -25,6 +25,7 @@ export {
   createRecord,
   updateRecord,
   deleteRecord,
+  recoverRecord,
   getAllRecords,
   batch,
   aggregateRecords,

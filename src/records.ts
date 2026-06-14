@@ -15,6 +15,8 @@ export interface RecordQuery extends PaginationParams {
   search?: string;
   fields?: string;
   cursor?: string;
+  includeDeleted?: boolean;
+  upsert?: boolean;
 }
 
 export interface RecordListResult {
@@ -171,6 +173,7 @@ export async function listRecords(
   if (query?.search) params.search = query.search;
   if (query?.fields) params.fields = query.fields;
   if (query?.cursor) params.cursor = query.cursor;
+  if (query?.includeDeleted !== undefined) params.includeDeleted = String(query.includeDeleted);
 
   const result = await client.get<RecordListResult>(
     `/api/collections/${collection}/records`,
@@ -205,15 +208,27 @@ export async function getRecord(
 
 /**
  * Create a new record in a collection.
+ * 
+ * @example
+ * // Create with upsert
+ * const record = await createRecord(client, "todos", 
+ *   { id: "existing-id", title: "Updated" },
+ *   { upsert: true }
+ * );
  */
 export async function createRecord(
   client: BoltstoreClient,
   collection: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  options?: { upsert?: boolean }
 ): Promise<RecordData> {
+  const body: Record<string, unknown> = { ...data };
+  if (options?.upsert) {
+    body._upsert = true;
+  }
   const result = await client.post<RecordData>(
     `/api/collections/${collection}/records`,
-    data
+    body
   );
 
   if (!result.success || !result.data) {
@@ -245,7 +260,7 @@ export async function updateRecord(
 }
 
 /**
- * Delete a record.
+ * Delete a record. Soft-delete is handled transparently by the server.
  */
 export async function deleteRecord(
   client: BoltstoreClient,
@@ -259,6 +274,26 @@ export async function deleteRecord(
   if (!result.success) {
     throw new Error(result.error?.message ?? "Failed to delete record");
   }
+}
+
+/**
+ * Recover a soft-deleted record (admin only).
+ * Calls POST /api/collections/{collection}/records/{id}/recover
+ */
+export async function recoverRecord(
+  client: BoltstoreClient,
+  collection: string,
+  id: string
+): Promise<RecordData> {
+  const result = await client.post<RecordData>(
+    `/api/collections/${collection}/records/${id}/recover`
+  );
+
+  if (!result.success || !result.data) {
+    throw new Error(result.error?.message ?? "Failed to recover record");
+  }
+
+  return result.data;
 }
 
 /**
