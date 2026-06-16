@@ -16,7 +16,6 @@
 import type {
   ApiResponse,
   CollectionInfo,
-  DatabaseInfo,
   BoltstoreRecord,
   ListOptions,
   BatchOperation,
@@ -24,6 +23,29 @@ import type {
   QueryOptions,
   PaginationMeta,
 } from "@boltstore/utils";
+
+// ---------------------------------------------------------------------------
+// Auth types
+// ---------------------------------------------------------------------------
+
+/** Token pair returned by login/refresh. */
+export interface TokenPair {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+}
+
+/** User profile as returned by /auth/me. */
+export interface UserProfile {
+  id: string;
+  email: string;
+  role: "user" | "admin";
+  created_at: string;
+  updated_at: string;
+}
+
+/** OAuth provider names. */
+export type OAuthProvider = "google" | "github";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -183,19 +205,135 @@ export class BoltstoreClient {
   }
 
   // -----------------------------------------------------------------------
-  // Databases
+  // Auth (public + authenticated non-admin endpoints)
   // -----------------------------------------------------------------------
 
   /**
-   * Operations on databases.
+   * Authentication operations.
+   *
+   * Register and login are public. Logout, me, and updateProfile require
+   * a token to be set on the client (via `config.token` or by calling
+   * `client.setToken()` after login).
+   *
+   * @example
+   * ```ts
+   * // Register a new user
+   * await client.auth.register("user@example.com", "password123");
+   *
+   * // Login and auto-set the token on the client
+   * await client.auth.login("user@example.com", "password123");
+   * // client is now authenticated — token sent on all subsequent requests
+   *
+   * // Get current user
+   * const me = await client.auth.me();
+   *
+   * // Logout (revokes all tokens)
+   * await client.auth.logout();
+   * ```
    */
-  databases = {
-    /** List all registered databases. */
-    list: async (): Promise<DatabaseInfo[]> => {
-      const res = await this.request<DatabaseInfo[]>("GET", "/api/databases");
-      return res.data ?? [];
+  auth = {
+    /**
+     * Register a new user account.
+     *
+     * Public endpoint — no authentication required.
+     */
+    register: async (email: string, password: string): Promise<UserProfile> => {
+      const res = await this.request<UserProfile>("POST", this.dbPath("/auth/register"), { email, password });
+      return res.data!;
+    },
+
+    /**
+     * Login and return a JWT token pair.
+     *
+     * Public endpoint. The token is automatically set on the client so
+     * subsequent requests are authenticated.
+     */
+    login: async (email: string, password: string): Promise<TokenPair> => {
+      const res = await this.request<TokenPair>("POST", this.dbPath("/auth/login"), { email, password });
+      this.token = res.data!.accessToken;
+      return res.data!;
+    },
+
+    /**
+     * Refresh the access token using a refresh token.
+     *
+     * Public endpoint. The new access token is automatically set on the client.
+     */
+    refresh: async (refreshToken: string): Promise<TokenPair> => {
+      const res = await this.request<TokenPair>("POST", this.dbPath("/auth/refresh"), { refreshToken });
+      this.token = res.data!.accessToken;
+      return res.data!;
+    },
+
+    /**
+     * Logout and revoke all tokens for the current user.
+     *
+     * Requires authentication (Bearer token).
+     */
+    logout: async (): Promise<void> => {
+      await this.request("POST", this.dbPath("/auth/logout"));
+      this.token = undefined;
+    },
+
+    /**
+     * Get the current user's profile.
+     *
+     * Requires authentication (Bearer token).
+     */
+    me: async (): Promise<UserProfile> => {
+      const res = await this.request<UserProfile>("GET", this.dbPath("/auth/me"));
+      return res.data!;
+    },
+
+    /**
+     * Update the current user's email and/or password.
+     *
+     * Requires authentication (Bearer token).
+     */
+    updateProfile: async (data: { email?: string; password?: string }): Promise<UserProfile> => {
+      const res = await this.request<UserProfile>("PATCH", this.dbPath("/auth/me"), data);
+      return res.data!;
+    },
+
+    /**
+     * Get the OAuth authorization URL for a provider.
+     *
+     * Public endpoint. Redirect the user to the returned URL to start
+     * the OAuth2 flow, then call `client.auth.oauthExchange()` with the
+     * authorization code.
+     */
+    oauthUrl: async (provider: OAuthProvider, redirectUri: string): Promise<string> => {
+      const res = await this.request<{ url: string }>(
+        "GET",
+        this.dbPath(`/auth/oauth/${provider}/url?redirect_uri=${encodeURIComponent(redirectUri)}`)
+      );
+      return res.data!.url;
+    },
+
+    /**
+     * Exchange an OAuth authorization code for JWT tokens.
+     *
+     * Public endpoint. The access token is automatically set on the client.
+     */
+    oauthExchange: async (provider: OAuthProvider, code: string, redirectUri: string): Promise<TokenPair> => {
+      const res = await this.request<TokenPair>("POST", this.dbPath(`/auth/oauth/${provider}`), {
+        code,
+        redirect_uri: redirectUri,
+      });
+      this.token = res.data!.accessToken;
+      return res.data!;
     },
   };
+
+  /** Manually set the token (e.g., after restoring from localStorage). */
+  setToken(token: string | undefined): void {
+    this.token = token;
+  }
+
+  /** Get the current token (e.g., to persist in localStorage). */
+  getToken(): string | undefined {
+    return this.token;
+  }
 
   // -----------------------------------------------------------------------
   // Health
