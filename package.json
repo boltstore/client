@@ -2,9 +2,12 @@
   "name": "@boltstore/client",
   "version": "1.0.0",
   "private": false,
-  "description": "Boltstore client SDK \u2014 JavaScript/TypeScript SDK for Boltstore",
+  "type": "module",
+  "description": "Boltstore client SDK — JavaScript/TypeScript SDK for Boltstore",
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
   "files": ["dist"],
   "scripts": {
     "build": "tsc",
@@ -14,6 +17,9 @@
   },
   "dependencies": {
     "@boltstore/utils": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
   },
   "license": "MIT"
 }
