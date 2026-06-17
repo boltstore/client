@@ -75,6 +75,8 @@ export interface HealthCheck {
   version: string;
   uptime: number;
   timestamp: string;
+  databases?: Array<{ name: string; created_at: string }>;
+  database_list?: string[];
 }
 
 /** Paginated response from list operations. */
