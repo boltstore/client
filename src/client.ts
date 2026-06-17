@@ -13,6 +13,9 @@
  * @module @boltstore/client
  */
 
+import {
+  generateSecureId,
+} from "@boltstore/utils";
 import type {
   ApiResponse,
   CollectionInfo,
@@ -59,10 +62,20 @@ export interface ClientConfig {
   database?: string;
   /** Optional JWT token for authenticated requests (Phase 2). */
   token?: string;
+  /** Optional refresh token for auto-refresh. */
+  refreshToken?: string;
 }
 
 /** HTTP method. */
 type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
+
+/** Health check response as returned by /api/health. */
+export interface HealthCheck {
+  status: string;
+  version: string;
+  uptime: number;
+  timestamp: string;
+}
 
 /** Paginated response from list operations. */
 export interface PaginatedResult<T> {
@@ -158,18 +171,20 @@ export class BoltstoreError extends Error {
  *
  * // Pagination
  * const page1 = await client.records.paginate("users", { page: 1, perPage: 20 });
- * // page1.meta.totalPages, page1.data[0].name
+ * // page1.meta.total_pages, page1.data[0].name
  * ```
  */
 export class BoltstoreClient {
   private baseUrl: string;
   private database: string | undefined;
   private token: string | undefined;
+  private refreshToken: string | undefined;
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
     this.database = config.database;
     this.token = config.token;
+    this.refreshToken = config.refreshToken;
   }
 
   // -----------------------------------------------------------------------
@@ -201,7 +216,7 @@ export class BoltstoreClient {
    * ```
    */
   collection<Fields = Record<string, unknown>>(name: string): TypedCollection<Fields> {
-    return new TypedCollectionImpl<Fields>(this, name, this.dbPath);
+    return new TypedCollectionImpl<Fields>(this, name, (path: string) => this.dbPath(path));
   }
 
   // -----------------------------------------------------------------------
@@ -251,6 +266,7 @@ export class BoltstoreClient {
     login: async (email: string, password: string): Promise<TokenPair> => {
       const res = await this.request<TokenPair>("POST", this.dbPath("/auth/login"), { email, password });
       this.token = res.data!.accessToken;
+      this.refreshToken = res.data!.refreshToken;
       return res.data!;
     },
 
@@ -259,10 +275,28 @@ export class BoltstoreClient {
      *
      * Public endpoint. The new access token is automatically set on the client.
      */
-    refresh: async (refreshToken: string): Promise<TokenPair> => {
-      const res = await this.request<TokenPair>("POST", this.dbPath("/auth/refresh"), { refreshToken });
+    refresh: async (refreshToken?: string): Promise<TokenPair> => {
+      const token = refreshToken || this.refreshToken;
+      if (!token) throw new BoltstoreError(400, "MISSING_REFRESH_TOKEN", "No refresh token available.");
+      const res = await this.request<TokenPair>("POST", this.dbPath("/auth/refresh"), { refreshToken: token });
       this.token = res.data!.accessToken;
+      this.refreshToken = res.data!.refreshToken;
       return res.data!;
+    },
+
+    /**
+     * Auto-refresh the access token if it is close to expiry.
+     *
+     * Uses the stored refresh token. Safe to call before any request; it
+     * refreshes only when the current access token is within the threshold.
+     */
+    autoRefresh: async (thresholdSeconds = 60): Promise<TokenPair | null> => {
+      if (!this.token || !this.refreshToken) return null;
+      const payload = decodeJwtPayload(this.token);
+      if (!payload || !payload.exp) return null;
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (payload.exp - nowSec > thresholdSeconds) return null;
+      return this.auth.refresh();
     },
 
     /**
@@ -273,6 +307,7 @@ export class BoltstoreClient {
     logout: async (): Promise<void> => {
       await this.request("POST", this.dbPath("/auth/logout"));
       this.token = undefined;
+      this.refreshToken = undefined;
     },
 
     /**
@@ -321,6 +356,7 @@ export class BoltstoreClient {
         redirect_uri: redirectUri,
       });
       this.token = res.data!.accessToken;
+      this.refreshToken = res.data!.refreshToken;
       return res.data!;
     },
   };
@@ -335,15 +371,25 @@ export class BoltstoreClient {
     return this.token;
   }
 
+  /** Manually set the refresh token. */
+  setRefreshToken(token: string | undefined): void {
+    this.refreshToken = token;
+  }
+
+  /** Get the current refresh token. */
+  getRefreshToken(): string | undefined {
+    return this.refreshToken;
+  }
+
   // -----------------------------------------------------------------------
   // Health
   // -----------------------------------------------------------------------
 
   /** Check server health. */
   health = {
-    check: async (): Promise<{ status: string; version: string; uptime: number; timestamp: string }> => {
-      const res = await this.request("GET", "/api/health");
-      return res.data as { status: string; version: string; uptime: number; timestamp: string };
+    check: async (): Promise<HealthCheck> => {
+      const res = await this.request<HealthCheck>("GET", "/api/health");
+      return res.data ?? { status: "unknown", version: "", uptime: 0, timestamp: "" };
     },
   };
 
@@ -409,7 +455,15 @@ export class BoltstoreClient {
     /** Count records matching an optional filter. */
     count: async (collection: string, filter?: Record<string, unknown>): Promise<number> => {
       const params = new URLSearchParams();
-      if (filter) { for (const [k, v] of Object.entries(filter)) params.set(k, String(v)); }
+      if (filter) {
+        for (const [k, v] of Object.entries(filter)) {
+          if (v === null || v === undefined) continue;
+          if (typeof v === "object" && !Array.isArray(v)) {
+            throw new BoltstoreError(400, "INVALID_FILTER", `Filter value for "${k}" must be a scalar or array.`);
+          }
+          params.set(k, Array.isArray(v) ? v.join(",") : String(v));
+        }
+      }
       const qs = params.toString();
       const path = this.dbPath(`/collections/${collection}/records/count`) + (qs ? `?${qs}` : "");
       const res = await this.request<{ count: number }>("GET", path);
@@ -439,24 +493,31 @@ export class BoltstoreClient {
      * Offset-based paginated list.
      *
      * Uses `page` / `perPage` query params. The server returns pagination
-     * metadata (`total`, `totalPages`, `page`, `perPage`) in the `meta`
+     * metadata (`total`, `total_pages`, `page`, `per_page`) in the `meta`
      * envelope, which this method extracts.
      *
      * @example
      * ```ts
      * const page1 = await client.records.paginate("users", { page: 1, perPage: 25 });
-     * console.log(page1.meta.totalPages); // number
+     * console.log(page1.meta.total_pages); // number
      * for (const user of page1.data) { ... }
      * ```
      */
     paginate: async (collection: string, options: PaginateOptions): Promise<PaginatedResult<BoltstoreRecord>> => {
+      const perPage = options.perPage ?? 50;
       const params = new URLSearchParams();
       params.set("page", String(options.page));
-      if (options.perPage) params.set("per_page", String(options.perPage));
+      params.set("per_page", String(perPage));
       if (options.sort) params.set("sort", options.sort);
       if (options.direction) params.set("direction", options.direction);
       if (options.filter) {
-        for (const [k, v] of Object.entries(options.filter)) params.set(k, String(v));
+        for (const [k, v] of Object.entries(options.filter)) {
+          if (v === null || v === undefined) continue;
+          if (typeof v === "object" && !Array.isArray(v)) {
+            throw new BoltstoreError(400, "INVALID_FILTER", `Filter value for "${k}" must be a scalar or array.`);
+          }
+          params.set(k, Array.isArray(v) ? v.join(",") : String(v));
+        }
       }
       const qs = params.toString();
       const path = this.dbPath(`/collections/${collection}/records`) + (qs ? `?${qs}` : "");
@@ -465,10 +526,10 @@ export class BoltstoreClient {
       return {
         data: res.data ?? [],
         meta: {
-          page: meta.page as number ?? options.page,
-          perPage: meta.perPage as number ?? options.perPage ?? (res.data?.length ?? 0),
-          total: meta.total as number ?? (res.data?.length ?? 0),
-          totalPages: meta.totalPages as number ?? 1,
+          page: (meta.page as number) ?? options.page,
+          per_page: (meta.per_page as number) ?? perPage,
+          total: (meta.total as number) ?? (res.data?.length ?? 0),
+          total_pages: (meta.total_pages as number) ?? 1,
         },
       };
     },
@@ -482,13 +543,15 @@ export class BoltstoreClient {
      */
     listAll: async (collection: string, options?: Omit<PaginateOptions, "page">): Promise<BoltstoreRecord[]> => {
       const perPage = options?.perPage ?? 100;
+      const maxPages = 1000;
       const all: BoltstoreRecord[] = [];
       let page = 1;
 
       while (true) {
         const result = await this.records.paginate(collection, { ...options, page, perPage });
         all.push(...result.data);
-        if (page >= result.meta.totalPages) break;
+        if (page >= result.meta.total_pages) break;
+        if (page >= maxPages) throw new BoltstoreError(400, "TOO_MANY_PAGES", `listAll stopped after ${maxPages} pages.`);
         page++;
       }
 
@@ -513,20 +576,55 @@ export class BoltstoreClient {
   // -----------------------------------------------------------------------
 
   /** @internal */
-  async request<T = unknown>(method: HttpMethod, path: string, body?: unknown): Promise<ApiResponse<T>> {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+  async request<T = unknown>(method: HttpMethod, path: string, body?: unknown, retries = 1): Promise<ApiResponse<T>> {
+    // Try auto-refresh before any authenticated request if we have a refresh token.
+    if (this.refreshToken && this.token) {
+      try { await this.auth.autoRefresh(); } catch { /* ignore auto-refresh failures */ }
+    }
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    };
     if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
     const init: RequestInit = { method, headers };
     if (body !== undefined) init.body = JSON.stringify(body);
-    const response = await globalThis.fetch(`${this.baseUrl}${path}`, init);
-    let json: ApiResponse<T>;
-    try { json = (await response.json()) as ApiResponse<T>; } catch {
-      throw new BoltstoreError(response.status, "PARSE_ERROR", `Failed to parse response from Boltstore server (status ${response.status}).`);
+
+    let lastError: Error | undefined;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const response = await globalThis.fetch(`${this.baseUrl}${path}`, init);
+        let json: ApiResponse<T>;
+        const contentType = response.headers.get("Content-Type") || "";
+        if (!contentType.includes("application/json")) {
+          const text = await response.text();
+          throw new BoltstoreError(
+            response.status,
+            "INVALID_RESPONSE",
+            `Expected JSON response, got ${contentType} (status ${response.status}): ${text.slice(0, 200)}`
+          );
+        }
+        try {
+          json = (await response.json()) as ApiResponse<T>;
+        } catch {
+          throw new BoltstoreError(response.status, "PARSE_ERROR", `Failed to parse response from Boltstore server (status ${response.status}).`);
+        }
+        if (json.error) {
+          throw new BoltstoreError(response.status, json.error.code, json.error.message, json.error.details);
+        }
+        return json;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        const isNetworkError = lastError.message.includes("fetch") || lastError.message.includes("network");
+        if (attempt < retries && isNetworkError) {
+          await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          continue;
+        }
+        break;
+      }
     }
-    if (json.error) {
-      throw new BoltstoreError(response.status, json.error.code, json.error.message, json.error.details);
-    }
-    return json;
+
+    if (lastError instanceof BoltstoreError) throw lastError;
+    throw new BoltstoreError(0, "NETWORK_ERROR", lastError?.message || "Network request failed");
   }
 
   /** @internal Build a database-scoped path. */
@@ -542,10 +640,16 @@ export class BoltstoreClient {
     if (options?.direction) params.set("direction", options.direction);
     if (options?.limit !== undefined) params.set("limit", String(options.limit));
     if (options?.offset !== undefined) params.set("offset", String(options.offset));
+    if (options?.page !== undefined) params.set("page", String(options.page));
+    if (options?.perPage !== undefined) params.set("per_page", String(options.perPage));
     if (options?.fields) params.set("fields", options.fields.join(","));
     if (options?.expand) params.set("expand", options.expand.join(","));
     if (options?.filter) {
-      for (const [k, v] of Object.entries(options.filter)) params.set(k, String(v));
+      for (const [k, v] of Object.entries(options.filter)) {
+        if (v === null || v === undefined) continue;
+        if (typeof v === "object" && !Array.isArray(v)) continue;
+        params.set(k, Array.isArray(v) ? v.join(",") : String(v));
+      }
     }
     const qs = params.toString();
     return this.dbPath(`/collections/${collection}/records`) + (qs ? `?${qs}` : "");
@@ -564,13 +668,13 @@ export class BoltstoreClient {
  */
 export interface TypedCollection<Fields> {
   /** Create a record in this collection. */
-  create(data: Fields & Partial<BoltstoreRecord>): Promise<TypedRecord<Fields>>;
+  create(data: Omit<Fields, "id" | "created_at" | "updated_at">): Promise<TypedRecord<Fields>>;
   /** List records. */
   list(options?: ListOptions): Promise<TypedRecord<Fields>[]>;
   /** Get a single record by ID. */
   get(id: string): Promise<TypedRecord<Fields>>;
   /** Update a record by ID. */
-  update(id: string, data: Partial<Fields>): Promise<TypedRecord<Fields>>;
+  update(id: string, data: Partial<Omit<Fields, "id" | "created_at" | "updated_at">>): Promise<TypedRecord<Fields>>;
   /** Delete a record by ID. */
   delete(id: string): Promise<void>;
   /** Count records matching a filter. */
@@ -589,7 +693,7 @@ export interface TypedCollection<Fields> {
 export interface TypedBatchOperation<Fields> {
   action: "create" | "update" | "delete";
   id?: string;
-  data?: Partial<Fields>;
+  data?: Partial<Omit<Fields, "id" | "created_at" | "updated_at">>;
 }
 
 /** @internal Implementation of TypedCollection. */
@@ -600,7 +704,7 @@ class TypedCollectionImpl<Fields> implements TypedCollection<Fields> {
     private dbPath: (path: string) => string,
   ) {}
 
-  async create(data: Fields & Partial<BoltstoreRecord>): Promise<TypedRecord<Fields>> {
+  async create(data: Omit<Fields, "id" | "created_at" | "updated_at">): Promise<TypedRecord<Fields>> {
     const res = await this.client.request<TypedRecord<Fields>>(
       "POST",
       this.dbPath(`/collections/${this.name}/records`),
@@ -623,7 +727,7 @@ class TypedCollectionImpl<Fields> implements TypedCollection<Fields> {
     return res.data!;
   }
 
-  async update(id: string, data: Partial<Fields>): Promise<TypedRecord<Fields>> {
+  async update(id: string, data: Partial<Omit<Fields, "id" | "created_at" | "updated_at">>): Promise<TypedRecord<Fields>> {
     const res = await this.client.request<TypedRecord<Fields>>(
       "PATCH",
       this.dbPath(`/collections/${this.name}/records/${id}`),
@@ -638,7 +742,15 @@ class TypedCollectionImpl<Fields> implements TypedCollection<Fields> {
 
   async count(filter?: Partial<Fields & Record<string, unknown>>): Promise<number> {
     const params = new URLSearchParams();
-    if (filter) { for (const [k, v] of Object.entries(filter)) params.set(k, String(v)); }
+    if (filter) {
+      for (const [k, v] of Object.entries(filter)) {
+        if (v === null || v === undefined) continue;
+        if (typeof v === "object" && !Array.isArray(v)) {
+          throw new BoltstoreError(400, "INVALID_FILTER", `Filter value for "${k}" must be a scalar or array.`);
+        }
+        params.set(k, Array.isArray(v) ? v.join(",") : String(v));
+      }
+    }
     const qs = params.toString();
     const path = this.dbPath(`/collections/${this.name}/records/count`) + (qs ? `?${qs}` : "");
     const res = await this.client.request<{ count: number }>("GET", path);
@@ -663,13 +775,20 @@ class TypedCollectionImpl<Fields> implements TypedCollection<Fields> {
   }
 
   async paginate(options: PaginateOptions): Promise<PaginatedResult<TypedRecord<Fields>>> {
+    const perPage = options.perPage ?? 50;
     const params = new URLSearchParams();
     params.set("page", String(options.page));
-    if (options.perPage) params.set("per_page", String(options.perPage));
+    params.set("per_page", String(perPage));
     if (options.sort) params.set("sort", options.sort);
     if (options.direction) params.set("direction", options.direction);
     if (options.filter) {
-      for (const [k, v] of Object.entries(options.filter)) params.set(k, String(v));
+      for (const [k, v] of Object.entries(options.filter)) {
+        if (v === null || v === undefined) continue;
+        if (typeof v === "object" && !Array.isArray(v)) {
+          throw new BoltstoreError(400, "INVALID_FILTER", `Filter value for "${k}" must be a scalar or array.`);
+        }
+        params.set(k, Array.isArray(v) ? v.join(",") : String(v));
+      }
     }
     const qs = params.toString();
     const path = this.dbPath(`/collections/${this.name}/records`) + (qs ? `?${qs}` : "");
@@ -678,27 +797,44 @@ class TypedCollectionImpl<Fields> implements TypedCollection<Fields> {
     return {
       data: res.data ?? [],
       meta: {
-        page: meta.page as number ?? options.page,
-        perPage: meta.perPage as number ?? options.perPage ?? (res.data?.length ?? 0),
-        total: meta.total as number ?? (res.data?.length ?? 0),
-        totalPages: meta.totalPages as number ?? 1,
+        page: (meta.page as number) ?? options.page,
+        per_page: (meta.per_page as number) ?? perPage,
+        total: (meta.total as number) ?? (res.data?.length ?? 0),
+        total_pages: (meta.total_pages as number) ?? 1,
       },
     };
   }
 
   async listAll(options?: Omit<PaginateOptions, "page">): Promise<TypedRecord<Fields>[]> {
     const perPage = options?.perPage ?? 100;
+    const maxPages = 1000;
     const all: TypedRecord<Fields>[] = [];
     let page = 1;
 
     while (true) {
       const result = await this.paginate({ ...options, page, perPage });
       all.push(...result.data);
-      if (page >= result.meta.totalPages) break;
+      if (page >= result.meta.total_pages) break;
+      if (page >= maxPages) throw new BoltstoreError(400, "TOO_MANY_PAGES", `listAll stopped after ${maxPages} pages.`);
       page++;
     }
 
     return all;
+  }
+}
+
+/**
+ * Decode a JWT payload without verifying the signature.
+ * Used by the client to inspect expiry for auto-refresh.
+ */
+function decodeJwtPayload(token: string): { exp?: number; [key: string]: unknown } | null {
+  try {
+    const payloadB64 = token.split(".")[1];
+    if (!payloadB64) return null;
+    const json = atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"));
+    return JSON.parse(json) as { exp?: number; [key: string]: unknown };
+  } catch {
+    return null;
   }
 }
 
