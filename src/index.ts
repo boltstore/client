@@ -10,13 +10,19 @@
 export {
   BoltstoreClient,
   BoltstoreError,
+  TypedCollectionImpl,
   type ClientConfig,
   type PaginatedResult,
   type TypedRecord,
   type TypedCollection,
-  type TypedBatchOperation,
   type PaginateOptions,
+  type TokenPair,
+  type UserProfile,
+  type OAuthProvider,
+  type HealthCheck,
 } from "./client";
+
+export type { TypedBatchOperation } from "./types";
 
 export type {
   ApiResponse,
