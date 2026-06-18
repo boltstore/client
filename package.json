@@ -16,7 +16,7 @@
     "prepublish": "bun run build"
   },
   "dependencies": {
-    "@boltstore/utils": "^0.7.0"
+    "@boltstore/utils": "^0.7.1"
   },
   "devDependencies": {
     "typescript": "^6.0.3"
