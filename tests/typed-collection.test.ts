@@ -61,6 +61,20 @@ describe("TypedCollectionImpl", () => {
     expect(capturedOptions).toEqual({ sort: "title", limit: 10 });
   });
 
+  test("list passes fields projection to buildListPath", async () => {
+    let capturedOptions: unknown = null;
+    const client = createMockClient({
+      buildListPath: (collection, options) => {
+        capturedOptions = options;
+        return `/api/db/collections/${collection}/records`;
+      },
+      request: async () => ({ data: [] }),
+    });
+    const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
+    await col.list({ fields: ["title", "content"] });
+    expect(capturedOptions).toEqual({ fields: ["title", "content"] });
+  });
+
   test("get returns single record", async () => {
     const client = createMockClient({
       request: async () => ({

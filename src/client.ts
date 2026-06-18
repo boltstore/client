@@ -145,7 +145,11 @@ export class BoltstoreClient {
         lastError = err instanceof Error ? err : new Error(String(err));
         const isNetworkError = lastError.message.includes("fetch") || lastError.message.includes("network");
         if (attempt < retries && isNetworkError) {
-          await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 500 * (attempt + 1));
+            // Allow the timer to be cancelled if the client is disposed
+            if (typeof timer === "object" && "unref" in timer) (timer as { unref(): void }).unref();
+          });
           continue;
         }
         break;

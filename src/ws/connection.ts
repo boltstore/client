@@ -187,6 +187,9 @@ export class RealtimeConnection {
         this.ws?.close(4000, "Heartbeat timeout");
       }, HEARTBEAT_TIMEOUT_MS);
     }, this.heartbeatIntervalMs);
+    if (this.heartbeatTimer && typeof this.heartbeatTimer === "object" && "unref" in this.heartbeatTimer) {
+      (this.heartbeatTimer as { unref(): void }).unref();
+    }
   }
 
   private stopHeartbeat(): void {
