@@ -31,6 +31,7 @@ interface ActiveSubscription {
 export class SubscriptionManager {
   private pending: Map<string, PendingSubscription> = new Map();
   private active: Map<string, ActiveSubscription> = new Map();
+  private localToServer: Map<string, string> = new Map();
   private send: (msg: Record<string, unknown>) => void;
   private removeMessageHandler: (() => void) | null = null;
   private removeStateHandler: (() => void) | null = null;
@@ -88,10 +89,12 @@ export class SubscriptionManager {
   }
 
   unsubscribe(subscriptionId: string): void {
-    const active = this.active.get(subscriptionId);
+    const serverId = this.localToServer.get(subscriptionId) ?? subscriptionId;
+    const active = this.active.get(serverId);
     if (active) {
-      this.send({ type: "unsubscribe", subscriptionId });
-      this.active.delete(subscriptionId);
+      this.send({ type: "unsubscribe", subscriptionId: serverId });
+      this.active.delete(serverId);
+      this.localToServer.delete(subscriptionId);
       return;
     }
     for (const [localId, pending] of this.pending) {
@@ -108,6 +111,7 @@ export class SubscriptionManager {
     }
     this.active.clear();
     this.pending.clear();
+    this.localToServer.clear();
   }
 
   getActiveSubscriptions(): Array<{
@@ -147,6 +151,8 @@ export class SubscriptionManager {
     if (!firstPending) return;
     this.pending.delete(firstPending.localId);
 
+    this.localToServer.set(firstPending.localId, serverSubscriptionId);
+
     const active: ActiveSubscription = {
       subscriptionId: serverSubscriptionId,
       collection: firstPending.collection,
@@ -176,6 +182,7 @@ export class SubscriptionManager {
   private resubscribeAll(): void {
     const subsToRestore = [...this.active.values()];
     this.active.clear();
+    this.localToServer.clear();
     for (const sub of subsToRestore) {
       const pending: PendingSubscription = {
         collection: sub.collection,
