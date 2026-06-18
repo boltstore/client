@@ -24,6 +24,10 @@ import type {
   TypedBatchOperation,
   PaginateOptions,
 } from "./types";
+import { createAuthApi } from "./api/auth";
+import { createHealthApi } from "./api/health";
+import { createCollectionsApi } from "./api/collections";
+import { createRecordsApi } from "./api/records";
 
 export { BoltstoreError };
 export { TypedCollectionImpl } from "./typed-collection";
@@ -43,14 +47,37 @@ export type {
 export class BoltstoreClient {
   private baseUrl: string;
   private database: string | undefined;
+  private databaseId: string | undefined;
   private token: string | undefined;
   private refreshToken: string | undefined;
 
+  auth: ReturnType<typeof createAuthApi>;
+  health: ReturnType<typeof createHealthApi>;
+  collections: ReturnType<typeof createCollectionsApi>;
+  records: ReturnType<typeof createRecordsApi>;
+
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
+
+    if (config.database && !config.databaseId) {
+      if (typeof console !== "undefined" && console.warn) {
+        console.warn(
+          "[boltstore] Deprecation warning: The `database` option is deprecated and will be removed in the next major release. " +
+          "Use `databaseId` instead with the database ID (e.g., 'dbs_...'). " +
+          "Run `boltstore admin databases` on the server to list database IDs."
+        );
+      }
+    }
+
     this.database = config.database;
+    this.databaseId = config.databaseId;
     this.token = config.token;
     this.refreshToken = config.refreshToken;
+
+    this.auth = createAuthApi(this);
+    this.health = createHealthApi(this);
+    this.collections = createCollectionsApi(this);
+    this.records = createRecordsApi(this);
   }
 
   collection<Fields = Record<string, unknown>>(name: string): TypedCollection<Fields> {
@@ -72,196 +99,6 @@ export class BoltstoreClient {
   getRefreshToken(): string | undefined {
     return this.refreshToken;
   }
-
-  auth = {
-    register: async (email: string, password: string): Promise<UserProfile> => {
-      const res = await this.request<UserProfile>("POST", this.dbPath("/auth/register"), { email, password });
-      return res.data!;
-    },
-
-    login: async (email: string, password: string): Promise<TokenPair> => {
-      const res = await this.request<TokenPair>("POST", this.dbPath("/auth/login"), { email, password });
-      this.token = res.data!.accessToken;
-      this.refreshToken = res.data!.refreshToken;
-      return res.data!;
-    },
-
-    refresh: async (refreshToken?: string): Promise<TokenPair> => {
-      const token = refreshToken || this.refreshToken;
-      if (!token) throw new BoltstoreError(400, "MISSING_REFRESH_TOKEN", "No refresh token available.");
-      const res = await this.request<TokenPair>("POST", this.dbPath("/auth/refresh"), { refreshToken: token });
-      this.token = res.data!.accessToken;
-      this.refreshToken = res.data!.refreshToken;
-      return res.data!;
-    },
-
-    autoRefresh: async (thresholdSeconds = 60): Promise<TokenPair | null> => {
-      if (!this.token || !this.refreshToken) return null;
-      const payload = decodeJwtPayload(this.token);
-      if (!payload || !payload.exp) return null;
-      const nowSec = Math.floor(Date.now() / 1000);
-      if (payload.exp - nowSec > thresholdSeconds) return null;
-      return this.auth.refresh();
-    },
-
-    logout: async (): Promise<void> => {
-      await this.request("POST", this.dbPath("/auth/logout"));
-      this.token = undefined;
-      this.refreshToken = undefined;
-    },
-
-    me: async (): Promise<UserProfile> => {
-      const res = await this.request<UserProfile>("GET", this.dbPath("/auth/me"));
-      return res.data!;
-    },
-
-    updateProfile: async (data: { email?: string; password?: string }): Promise<UserProfile> => {
-      const res = await this.request<UserProfile>("PATCH", this.dbPath("/auth/me"), data);
-      return res.data!;
-    },
-
-    oauthUrl: async (provider: OAuthProvider, redirectUri: string): Promise<string> => {
-      const res = await this.request<{ url: string }>(
-        "GET",
-        this.dbPath(`/auth/oauth/${provider}/url?redirect_uri=${encodeURIComponent(redirectUri)}`)
-      );
-      return res.data!.url;
-    },
-
-    oauthExchange: async (provider: OAuthProvider, code: string, redirectUri: string): Promise<TokenPair> => {
-      const res = await this.request<TokenPair>("POST", this.dbPath(`/auth/oauth/${provider}`), {
-        code,
-        redirect_uri: redirectUri,
-      });
-      this.token = res.data!.accessToken;
-      this.refreshToken = res.data!.refreshToken;
-      return res.data!;
-    },
-  };
-
-  health = {
-    check: async (): Promise<HealthCheck> => {
-      const res = await this.request<HealthCheck>("GET", "/api/health");
-      return res.data ?? { status: "unknown", version: "", uptime: 0, timestamp: "" };
-    },
-  };
-
-  collections = {
-    list: async (): Promise<CollectionInfo[]> => {
-      const res = await this.request<CollectionInfo[]>("GET", this.dbPath("/collections"));
-      return res.data ?? [];
-    },
-
-    get: async (name: string): Promise<CollectionInfo> => {
-      const res = await this.request<CollectionInfo>("GET", this.dbPath(`/collections/${name}`));
-      return res.data!;
-    },
-  };
-
-  records = {
-    create: async (collection: string, data: Record<string, unknown>): Promise<BoltstoreRecord> => {
-      const res = await this.request<BoltstoreRecord>("POST", this.dbPath(`/collections/${collection}/records`), data);
-      return res.data!;
-    },
-
-    list: async (collection: string, options?: ListOptions): Promise<BoltstoreRecord[]> => {
-      const path = this.buildListPath(collection, options);
-      const res = await this.request<BoltstoreRecord[]>("GET", path);
-      return res.data ?? [];
-    },
-
-    get: async (collection: string, id: string): Promise<BoltstoreRecord> => {
-      const res = await this.request<BoltstoreRecord>("GET", this.dbPath(`/collections/${collection}/records/${id}`));
-      return res.data!;
-    },
-
-    update: async (collection: string, id: string, data: Record<string, unknown>): Promise<BoltstoreRecord> => {
-      const res = await this.request<BoltstoreRecord>("PATCH", this.dbPath(`/collections/${collection}/records/${id}`), data);
-      return res.data!;
-    },
-
-    delete: async (collection: string, id: string): Promise<void> => {
-      await this.request("DELETE", this.dbPath(`/collections/${collection}/records/${id}`));
-    },
-
-    count: async (collection: string, filter?: Record<string, unknown>): Promise<number> => {
-      const params = new URLSearchParams();
-      if (filter) {
-        for (const [k, v] of Object.entries(filter)) {
-          if (v === null || v === undefined) continue;
-          if (typeof v === "object" && !Array.isArray(v)) {
-            throw new BoltstoreError(400, "INVALID_FILTER", `Filter value for "${k}" must be a scalar or array.`);
-          }
-          params.set(k, Array.isArray(v) ? v.join(",") : String(v));
-        }
-      }
-      const qs = params.toString();
-      const path = this.dbPath(`/collections/${collection}/records/count`) + (qs ? `?${qs}` : "");
-      const res = await this.request<{ count: number }>("GET", path);
-      return res.data?.count ?? 0;
-    },
-
-    distinct: async (collection: string, field: string): Promise<unknown[]> => {
-      const res = await this.request<{ field: string; values: unknown[] }>(
-        "GET",
-        this.dbPath(`/collections/${collection}/records/distinct?field=${encodeURIComponent(field)}`)
-      );
-      return res.data?.values ?? [];
-    },
-
-    batch: async (collection: string, operations: BatchOperation[]): Promise<BatchResult> => {
-      const res = await this.request<BatchResult>("POST", this.dbPath(`/collections/${collection}/records/batch`), operations);
-      return res.data!;
-    },
-
-    paginate: async (collection: string, options: PaginateOptions): Promise<PaginatedResult<BoltstoreRecord>> => {
-      const perPage = options.perPage ?? 50;
-      const params = new URLSearchParams();
-      params.set("page", String(options.page));
-      params.set("per_page", String(perPage));
-      if (options.sort) params.set("sort", options.sort);
-      if (options.direction) params.set("direction", options.direction);
-      if (options.filter) {
-        for (const [k, v] of Object.entries(options.filter)) {
-          if (v === null || v === undefined) continue;
-          if (typeof v === "object" && !Array.isArray(v)) {
-            throw new BoltstoreError(400, "INVALID_FILTER", `Filter value for "${k}" must be a scalar or array.`);
-          }
-          params.set(k, Array.isArray(v) ? v.join(",") : String(v));
-        }
-      }
-      const qs = params.toString();
-      const path = this.dbPath(`/collections/${collection}/records`) + (qs ? `?${qs}` : "");
-      const res = await this.request<BoltstoreRecord[]>("GET", path);
-      const meta = res.meta ?? {};
-      return {
-        data: res.data ?? [],
-        meta: {
-          page: (meta.page as number) ?? options.page,
-          per_page: (meta.per_page as number) ?? perPage,
-          total: (meta.total as number) ?? (res.data?.length ?? 0),
-          total_pages: (meta.total_pages as number) ?? 1,
-        },
-      };
-    },
-
-    listAll: async (collection: string, options?: Omit<PaginateOptions, "page">): Promise<BoltstoreRecord[]> => {
-      const perPage = options?.perPage ?? 100;
-      const maxPages = 1000;
-      const all: BoltstoreRecord[] = [];
-      let page = 1;
-
-      while (true) {
-        const result = await this.records.paginate(collection, { ...options, page, perPage });
-        all.push(...result.data);
-        if (page >= result.meta.total_pages) break;
-        if (page >= maxPages) throw new BoltstoreError(400, "TOO_MANY_PAGES", `listAll stopped after ${maxPages} pages.`);
-        page++;
-      }
-
-      return all;
-    },
-  };
 
   async query(options: QueryOptions): Promise<{ data: BoltstoreRecord[]; meta: Record<string, unknown> }> {
     const res = await this.request<BoltstoreRecord[]>("POST", this.dbPath("/query"), options);
@@ -319,7 +156,8 @@ export class BoltstoreClient {
   }
 
   dbPath(path: string): string {
-    if (this.database) return `/api/${this.database}${path}`;
+    const db = this.databaseId ?? this.database;
+    if (db) return `/api/${db}${path}`;
     return `/api${path}`;
   }
 
