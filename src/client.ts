@@ -1,17 +1,13 @@
 import type {
   ApiResponse,
-  CollectionInfo,
   BoltstoreRecord,
   ListOptions,
-  BatchOperation,
-  BatchResult,
   QueryOptions,
 } from "@boltstore/utils";
 
 import { BoltstoreError } from "./errors";
-import { decodeJwtPayload } from "./jwt";
-import { TypedCollectionImpl, type MinimalClient } from "./typed-collection";
-import type { TypedCollection } from "./types";
+import { TypedCollectionImpl } from "./typed-collection";
+import type { TypedCollection } from "./typed-collection";
 import type {
   HttpMethod,
   TokenPair,

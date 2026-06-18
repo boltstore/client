@@ -1,5 +1,5 @@
 import type { BoltstoreClient } from "../client";
-import type { BoltstoreRecord, ListOptions, BatchOperation, BatchResult, QueryOptions } from "@boltstore/utils";
+import type { BoltstoreRecord, ListOptions, BatchOperation, BatchResult } from "@boltstore/utils";
 import type { PaginateOptions, PaginatedResult } from "../types";
 import { BoltstoreError } from "../errors";
 

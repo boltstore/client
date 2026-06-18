@@ -1,0 +1,203 @@
+import { generateSecureId, type RecordEvent, type ConnectionState } from "@boltstore/utils";
+
+export type EventCallback = (event: RecordEvent) => void;
+export type ErrorCallback = (error: { code: string; message: string }) => void;
+
+export interface SubscribeOptions {
+  recordId?: string;
+  filter?: Record<string, unknown>;
+  onEvent: EventCallback;
+  onError?: ErrorCallback;
+}
+
+interface PendingSubscription {
+  collection: string;
+  recordId?: string;
+  filter?: Record<string, unknown>;
+  onEvent: EventCallback;
+  onError?: ErrorCallback;
+  localId: string;
+}
+
+interface ActiveSubscription {
+  subscriptionId: string;
+  collection: string;
+  recordId?: string;
+  filter?: Record<string, unknown>;
+  onEvent: EventCallback;
+  onError?: ErrorCallback;
+}
+
+export class SubscriptionManager {
+  private pending: Map<string, PendingSubscription> = new Map();
+  private active: Map<string, ActiveSubscription> = new Map();
+  private send: (msg: Record<string, unknown>) => void;
+  private removeMessageHandler: (() => void) | null = null;
+  private removeStateHandler: (() => void) | null = null;
+  private connected = false;
+
+  constructor(
+    send: (msg: Record<string, unknown>) => void,
+    onMessage: (handler: (data: unknown) => void) => void,
+    onStateChange: (handler: (state: ConnectionState) => void) => void,
+  ) {
+    this.send = send;
+
+    const msgHandler = (data: unknown): void => {
+      if (!data || typeof data !== "object") return;
+      const msg = data as Record<string, unknown>;
+      if (msg.type === "subscribed" && typeof msg.subscriptionId === "string") {
+        this.handleSubscribed(msg.subscriptionId as string);
+      } else if (msg.type === "event") {
+        this.handleEvent(data as RecordEvent);
+      } else if (msg.type === "error") {
+        this.handleError(data as { code?: string; message?: string });
+      }
+    };
+    onMessage(msgHandler);
+    this.removeMessageHandler = () => { /* caller can detach if needed */ };
+
+    onStateChange((state: ConnectionState) => {
+      if (state === "connected" && !this.connected) {
+        this.connected = true;
+        this.resubscribeAll();
+      } else if (state === "disconnected" || state === "reconnecting") {
+        this.connected = false;
+      }
+    });
+  }
+
+  subscribe(collection: string, options: SubscribeOptions): string {
+    const localId = generateSecureId("sub");
+    const pending: PendingSubscription = {
+      collection,
+      recordId: options.recordId,
+      filter: options.filter,
+      onEvent: options.onEvent,
+      onError: options.onError,
+      localId,
+    };
+    this.pending.set(localId, pending);
+
+    const msg: Record<string, unknown> = { type: "subscribe", collection };
+    if (options.recordId) msg.recordId = options.recordId;
+    if (options.filter) msg.filter = options.filter;
+    this.send(msg);
+
+    return localId;
+  }
+
+  unsubscribe(subscriptionId: string): void {
+    const active = this.active.get(subscriptionId);
+    if (active) {
+      this.send({ type: "unsubscribe", subscriptionId });
+      this.active.delete(subscriptionId);
+      return;
+    }
+    for (const [localId, pending] of this.pending) {
+      if (pending.localId === subscriptionId) {
+        this.pending.delete(localId);
+        return;
+      }
+    }
+  }
+
+  unsubscribeAll(): void {
+    for (const [id] of this.active) {
+      this.send({ type: "unsubscribe", subscriptionId: id });
+    }
+    this.active.clear();
+    this.pending.clear();
+  }
+
+  getActiveSubscriptions(): Array<{
+    subscriptionId: string;
+    collection: string;
+    recordId?: string;
+    filter?: Record<string, unknown>;
+  }> {
+    const result: Array<{
+      subscriptionId: string;
+      collection: string;
+      recordId?: string;
+      filter?: Record<string, unknown>;
+    }> = [];
+    for (const sub of this.active.values()) {
+      result.push({
+        subscriptionId: sub.subscriptionId,
+        collection: sub.collection,
+        recordId: sub.recordId,
+        filter: sub.filter,
+      });
+    }
+    for (const sub of this.pending.values()) {
+      result.push({
+        subscriptionId: sub.localId,
+        collection: sub.collection,
+        recordId: sub.recordId,
+        filter: sub.filter,
+      });
+    }
+    return result;
+  }
+
+  private handleSubscribed(serverSubscriptionId: string): void {
+    if (this.pending.size === 0) return;
+    const firstPending = this.pending.values().next().value;
+    if (!firstPending) return;
+    this.pending.delete(firstPending.localId);
+
+    const active: ActiveSubscription = {
+      subscriptionId: serverSubscriptionId,
+      collection: firstPending.collection,
+      recordId: firstPending.recordId,
+      filter: firstPending.filter,
+      onEvent: firstPending.onEvent,
+      onError: firstPending.onError,
+    };
+    this.active.set(serverSubscriptionId, active);
+  }
+
+  private handleEvent(event: RecordEvent): void {
+    for (const sub of this.active.values()) {
+      if (sub.collection && sub.collection !== event.collection) continue;
+      if (sub.recordId && sub.recordId !== (event.record.id as string)) continue;
+      if (sub.filter && !this.matchesFilter(event.record, sub.filter)) continue;
+      sub.onEvent(event);
+    }
+  }
+
+  private handleError(error: { code?: string; message?: string }): void {
+    for (const sub of this.active.values()) {
+      sub.onError?.({ code: error.code ?? "UNKNOWN", message: error.message ?? "Unknown error" });
+    }
+  }
+
+  private resubscribeAll(): void {
+    const subsToRestore = [...this.active.values()];
+    this.active.clear();
+    for (const sub of subsToRestore) {
+      const pending: PendingSubscription = {
+        collection: sub.collection,
+        recordId: sub.recordId,
+        filter: sub.filter,
+        onEvent: sub.onEvent,
+        onError: sub.onError,
+        localId: sub.subscriptionId,
+      };
+      this.pending.set(sub.subscriptionId, pending);
+
+      const msg: Record<string, unknown> = { type: "subscribe", collection: sub.collection };
+      if (sub.recordId) msg.recordId = sub.recordId;
+      if (sub.filter) msg.filter = sub.filter;
+      this.send(msg);
+    }
+  }
+
+  private matchesFilter(record: Record<string, unknown>, filter: Record<string, unknown>): boolean {
+    for (const [key, value] of Object.entries(filter)) {
+      if (record[key] !== value) return false;
+    }
+    return true;
+  }
+}

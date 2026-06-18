@@ -1,5 +1,5 @@
 import { BoltstoreError } from "./errors";
-import type { BoltstoreRecord, ListOptions, BatchResult } from "@boltstore/utils";
+import type { ListOptions, BatchResult } from "@boltstore/utils";
 import type {
   TypedCollection,
   TypedBatchOperation,

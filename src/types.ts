@@ -1,12 +1,4 @@
-import type {
-  ApiResponse,
-  BoltstoreRecord,
-  ListOptions,
-  BatchOperation,
-  BatchResult,
-  QueryOptions,
-  PaginationMeta,
-} from "@boltstore/utils";
+import type { PaginationMeta, ListOptions, BatchResult, BoltstoreRecord } from "@boltstore/utils";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
