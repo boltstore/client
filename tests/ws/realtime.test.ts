@@ -76,7 +76,7 @@ describe("Realtime", () => {
   beforeEach(() => {
     MockWebSocket._reset();
     realtime = new Realtime("http://localhost:8080", () => "test-token", {
-      database: "myapp",
+      databaseId: "dbs_abc",
       heartbeatIntervalMs: 100_000,
     });
   });
@@ -208,7 +208,7 @@ describe("Realtime", () => {
       type: "event",
       event: "create",
       collection: "posts",
-      database: "myapp",
+      databaseId: "dbs_abc",
       record: { id: "rec_1", title: "Hello" },
     }));
 
@@ -231,7 +231,7 @@ describe("Realtime", () => {
       type: "event",
       event: "create",
       collection: "posts",
-      database: "myapp",
+      databaseId: "dbs_abc",
       record: { id: "rec_1" },
     }));
 

@@ -107,7 +107,7 @@ describe("SubscriptionManager", () => {
       type: "event",
       event: "create",
       collection: "posts",
-      database: "myapp",
+      databaseId: "dbs_abc",
       record: { id: "rec_1", title: "Hello" },
     };
     ctx.messages[0](recordEvent);
@@ -125,7 +125,7 @@ describe("SubscriptionManager", () => {
       type: "event",
       event: "update",
       collection: "comments",
-      database: "myapp",
+      databaseId: "dbs_abc",
       record: { id: "rec_2" },
     });
 
@@ -144,7 +144,7 @@ describe("SubscriptionManager", () => {
       type: "event",
       event: "update",
       collection: "posts",
-      database: "myapp",
+      databaseId: "dbs_abc",
       record: { id: "rec_2" },
     });
 
@@ -163,7 +163,7 @@ describe("SubscriptionManager", () => {
       type: "event",
       event: "update",
       collection: "posts",
-      database: "myapp",
+      databaseId: "dbs_abc",
       record: { id: "rec_1", title: "Updated" },
     });
 
@@ -183,7 +183,7 @@ describe("SubscriptionManager", () => {
       type: "event",
       event: "create",
       collection: "posts",
-      database: "myapp",
+      databaseId: "dbs_abc",
       record: { id: "rec_1", status: "draft" },
     });
     expect(events).toHaveLength(0);
@@ -193,7 +193,7 @@ describe("SubscriptionManager", () => {
       type: "event",
       event: "create",
       collection: "posts",
-      database: "myapp",
+      databaseId: "dbs_abc",
       record: { id: "rec_2", status: "published" },
     });
     expect(events).toHaveLength(1);

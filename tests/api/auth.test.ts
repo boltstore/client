@@ -20,7 +20,7 @@ describe("BoltstoreClient — auth", () => {
 
   test("login stores token and refreshToken", async () => {
     mockFetch({ body: { data: { accessToken: "at_123", refreshToken: "rt_456", expiresIn: 900 } } });
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const tokens = await client.auth.login("user@test.com", "pass");
     expect(tokens.accessToken).toBe("at_123");
     expect(client.getToken()).toBe("at_123");
@@ -29,7 +29,7 @@ describe("BoltstoreClient — auth", () => {
 
   test("register returns UserProfile", async () => {
     mockFetch({ body: { data: { id: "usr_1", email: "new@test.com", role: "user", created_at: "now", updated_at: "now" } } });
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const profile = await client.auth.register("new@test.com", "pass");
     expect(profile.id).toBe("usr_1");
     expect(profile.email).toBe("new@test.com");
@@ -38,7 +38,7 @@ describe("BoltstoreClient — auth", () => {
 
   test("logout clears token and refreshToken", async () => {
     mockFetch({ body: { data: {} } });
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app", token: "tok", refreshToken: "rt" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app", token: "tok", refreshToken: "rt" });
     await client.auth.logout();
     expect(client.getToken()).toBeUndefined();
     expect(client.getRefreshToken()).toBeUndefined();
@@ -46,7 +46,7 @@ describe("BoltstoreClient — auth", () => {
 
   test("refresh uses stored refreshToken", async () => {
     mockFetch({ body: { data: { accessToken: "at_123", refreshToken: "rt_456", expiresIn: 900 } } });
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app", refreshToken: "rt_456" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app", refreshToken: "rt_456" });
     const tokens = await client.auth.refresh();
     expect(tokens.accessToken).toBe("at_123");
     expect(client.getToken()).toBe("at_123");
@@ -61,7 +61,7 @@ describe("BoltstoreClient — auth", () => {
         headers: { "Content-Type": "application/json" },
       });
     };
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app", refreshToken: "rt_stored" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app", refreshToken: "rt_stored" });
     await client.auth.refresh("rt_explicit");
     expect((sentBody as Record<string, unknown>).refreshToken).toBe("rt_explicit");
   });
@@ -78,7 +78,7 @@ describe("BoltstoreClient — auth", () => {
 
   test("me returns UserProfile", async () => {
     mockFetch({ body: { data: { id: "usr_1", email: "me@test.com", role: "user", created_at: "now", updated_at: "now" } } });
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app", token: "tok" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app", token: "tok" });
     const profile = await client.auth.me();
     expect(profile.id).toBe("usr_1");
     expect(profile.email).toBe("me@test.com");
@@ -86,21 +86,21 @@ describe("BoltstoreClient — auth", () => {
 
   test("updateProfile returns updated UserProfile", async () => {
     mockFetch({ body: { data: { id: "usr_1", email: "updated@test.com", role: "user", created_at: "now", updated_at: "now" } } });
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app", token: "tok" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app", token: "tok" });
     const profile = await client.auth.updateProfile({ email: "updated@test.com" });
     expect(profile.email).toBe("updated@test.com");
   });
 
   test("oauthUrl returns URL string", async () => {
     mockFetch({ body: { data: { url: "https://accounts.google.com/o/oauth2/auth?..." } } });
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const url = await client.auth.oauthUrl("google", "http://localhost:3000/callback");
     expect(url).toContain("accounts.google.com");
   });
 
   test("oauthExchange returns TokenPair and stores tokens", async () => {
     mockFetch({ body: { data: { accessToken: "at_oauth", refreshToken: "rt_oauth", expiresIn: 900 } } });
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const tokens = await client.auth.oauthExchange("google", "auth_code", "http://localhost:3000/callback");
     expect(tokens.accessToken).toBe("at_oauth");
     expect(client.getToken()).toBe("at_oauth");

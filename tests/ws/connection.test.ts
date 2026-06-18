@@ -87,7 +87,7 @@ describe("RealtimeConnection", () => {
     MockWebSocket._reset();
     tokenProvider = () => "test-token";
     conn = new RealtimeConnection("http://localhost:8080", tokenProvider, {
-      database: "myapp",
+      databaseId: "dbs_abc",
       reconnect: { maxRetries: 2, initialDelayMs: 10 },
       heartbeatIntervalMs: 100_000, // effectively disable heartbeat in tests
     });
@@ -102,7 +102,7 @@ describe("RealtimeConnection", () => {
     const ws = MockWebSocket._last();
     expect(ws).toBeDefined();
     expect(ws!.url).toContain("token=test-token");
-    expect(ws!.url).toContain("database=myapp");
+    expect(ws!.url).toContain("database=dbs_abc");
   });
 
   test("connect sets state to connecting then connected on open", () => {
@@ -208,7 +208,7 @@ describe("RealtimeConnection", () => {
 
   test("stops reconnecting after maxRetries when connection never opens", async () => {
     conn = new RealtimeConnection("http://localhost:8080", tokenProvider, {
-      database: "myapp",
+      databaseId: "dbs_abc",
       reconnect: { maxRetries: 1, initialDelayMs: 5 },
       heartbeatIntervalMs: 100_000,
     });
@@ -249,18 +249,16 @@ describe("RealtimeConnection", () => {
     expect(MockWebSocket.instances.length).toBe(1);
   });
 
-  test("uses databaseId over database when both provided", () => {
+  test("uses databaseId when provided", () => {
     conn = new RealtimeConnection("http://localhost:8080", tokenProvider, {
       databaseId: "dbs_abc",
-      database: "myapp",
     });
     conn.connect();
     const ws = MockWebSocket._last()!;
     expect(ws!.url).toContain("database=dbs_abc");
-    expect(ws!.url).not.toContain("database=myapp");
   });
 
-  test("omits database param when neither databaseId nor database set", () => {
+  test("omits database param when no databaseId set", () => {
     conn = new RealtimeConnection("http://localhost:8080", tokenProvider);
     conn.connect();
     const ws = MockWebSocket._last()!;
@@ -269,7 +267,7 @@ describe("RealtimeConnection", () => {
 
   test("omits token param when no token available", () => {
     conn = new RealtimeConnection("http://localhost:8080", () => undefined, {
-      database: "myapp",
+      databaseId: "dbs_abc",
     });
     conn.connect();
     const ws = MockWebSocket._last()!;

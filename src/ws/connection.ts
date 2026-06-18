@@ -26,8 +26,7 @@ export class RealtimeConnection {
   private pendingMessages: string[] = [];
 
   private url: string;
-  private databaseId?: string;
-  private database?: string;
+  private databaseId: string | undefined;
   private getToken: () => string | undefined;
   private reconnectConfig: ReconnectConfig;
   private heartbeatIntervalMs: number;
@@ -37,7 +36,6 @@ export class RealtimeConnection {
     getToken: () => string | undefined,
     options?: {
       databaseId?: string;
-      database?: string;
       reconnect?: Partial<ReconnectConfig>;
       heartbeatIntervalMs?: number;
     }
@@ -45,7 +43,6 @@ export class RealtimeConnection {
     this.url = url.replace(/\/$/, "");
     this.getToken = getToken;
     this.databaseId = options?.databaseId;
-    this.database = options?.database;
     this.reconnectConfig = { ...DEFAULT_RECONNECT, ...options?.reconnect };
     this.heartbeatIntervalMs = options?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
   }
@@ -72,8 +69,7 @@ export class RealtimeConnection {
     const params = new URLSearchParams();
     const token = this.getToken();
     if (token) params.set("token", token);
-    const db = this.databaseId ?? this.database;
-    if (db) params.set("database", db);
+    if (this.databaseId) params.set("database", this.databaseId);
 
     const wsUrl = `${this.url}/ws?${params.toString()}`;
     this.ws = new WebSocket(wsUrl);

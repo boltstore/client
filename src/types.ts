@@ -20,13 +20,8 @@ export type OAuthProvider = "google" | "github";
 
 export interface ClientConfig {
   baseUrl: string;
-  /**
-   * Database name.
-   * @deprecated Will be removed in the next major release. Use `databaseId` instead.
-   */
-  database?: string;
-  /** Database ID (dbs_ prefix). Takes precedence over database name. */
-  databaseId?: string;
+  /** Database ID (dbs_ prefix). Required for all database-scoped operations. */
+  databaseId: string;
   token?: string;
   refreshToken?: string;
   /** Optional WebSocket configuration for realtime subscriptions. */

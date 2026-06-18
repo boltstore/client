@@ -23,71 +23,66 @@ function mockFetchError(status: number, body?: string, contentType?: string) {
 }
 
 describe("BoltstoreClient — dbPath", () => {
-  test("includes database in path when set", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "myapp" });
-    expect(client.dbPath("/collections")).toBe("/api/myapp/collections");
-  });
-
-  test("omits database in path when not set", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080" });
-    expect(client.dbPath("/collections")).toBe("/api/collections");
+  test("includes databaseId in path when set", () => {
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_abc" });
+    expect(client.dbPath("/collections")).toBe("/api/dbs_abc/collections");
   });
 
   test("strips trailing slash from baseUrl", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080/" });
-    expect(client.dbPath("/health")).toBe("/api/health");
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080/", databaseId: "dbs_abc" });
+    expect(client.dbPath("/health")).toBe("/api/dbs_abc/health");
   });
 
-  test("databaseId takes precedence over database", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_abc", database: "myapp" });
+  test("uses databaseId in path", () => {
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_abc" });
     expect(client.dbPath("/collections")).toBe("/api/dbs_abc/collections");
   });
 });
 
 describe("BoltstoreClient — buildListPath", () => {
   test("builds path with sort and direction", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const path = client.buildListPath("users", { sort: "name", direction: "asc" });
-    expect(path).toContain("/api/app/collections/users/records");
+    expect(path).toContain("/api/dbs_app/collections/users/records");
     expect(path).toContain("sort=name");
     expect(path).toContain("direction=asc");
   });
 
   test("builds path with limit and offset", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const path = client.buildListPath("users", { limit: 10, offset: 20 });
     expect(path).toContain("limit=10");
     expect(path).toContain("offset=20");
   });
 
   test("builds path with page and perPage", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const path = client.buildListPath("users", { page: 2, perPage: 25 });
     expect(path).toContain("page=2");
     expect(path).toContain("per_page=25");
   });
 
   test("builds path with fields", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const path = client.buildListPath("users", { fields: ["name", "email"] });
     expect(path).toContain("fields=name%2Cemail");
   });
 
   test("builds path with expand", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const path = client.buildListPath("posts", { expand: ["author", "category"] });
     expect(path).toContain("expand=author%2Ccategory");
   });
 
   test("builds path with filter", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const path = client.buildListPath("users", { filter: { name: "Alice", age: 30 } });
     expect(path).toContain("name=Alice");
     expect(path).toContain("age=30");
   });
 
   test("skips null and undefined filter values", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const path = client.buildListPath("users", { filter: { name: "Alice", deleted: null, archived: undefined } });
     expect(path).toContain("name=Alice");
     expect(path).not.toContain("deleted");
@@ -95,22 +90,22 @@ describe("BoltstoreClient — buildListPath", () => {
   });
 
   test("skips object filter values", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const path = client.buildListPath("users", { filter: { name: "Alice", meta: { key: "val" } } });
     expect(path).toContain("name=Alice");
     expect(path).not.toContain("meta");
   });
 
   test("handles array filter values", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const path = client.buildListPath("users", { filter: { status: ["active", "pending"] } });
     expect(path).toContain("status=active%2Cpending");
   });
 
   test("no query string when no options", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const path = client.buildListPath("users");
-    expect(path).toBe("/api/app/collections/users/records");
+    expect(path).toBe("/api/dbs_app/collections/users/records");
   });
 });
 
@@ -254,7 +249,7 @@ describe("BoltstoreClient — query", () => {
   });
 
   test("query sends POST and returns results", async () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "app" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
     const result = await client.query({ collection: "items", filter: { title: { $eq: "Test" } } });
     expect(result.data).toHaveLength(1);
     expect(result.data[0].title).toBe("Result");

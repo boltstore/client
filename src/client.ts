@@ -43,8 +43,7 @@ export type {
 
 export class BoltstoreClient {
   private baseUrl: string;
-  private database: string | undefined;
-  private databaseId: string | undefined;
+  private databaseId: string;
   private token: string | undefined;
   private refreshToken: string | undefined;
   private realtimeConfig: ClientConfig["realtime"];
@@ -57,18 +56,6 @@ export class BoltstoreClient {
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
-
-    if (config.database && !config.databaseId) {
-      if (typeof console !== "undefined" && console.warn) {
-        console.warn(
-          "[boltstore] Deprecation warning: The `database` option is deprecated and will be removed in the next major release. " +
-          "Use `databaseId` instead with the database ID (e.g., 'dbs_...'). " +
-          "Run `boltstore admin databases` on the server to list database IDs."
-        );
-      }
-    }
-
-    this.database = config.database;
     this.databaseId = config.databaseId;
     this.token = config.token;
     this.refreshToken = config.refreshToken;
@@ -87,7 +74,6 @@ export class BoltstoreClient {
         () => this.token,
         {
           databaseId: this.databaseId,
-          database: this.database,
           ...this.realtimeConfig,
         },
       );
@@ -171,9 +157,7 @@ export class BoltstoreClient {
   }
 
   dbPath(path: string): string {
-    const db = this.databaseId ?? this.database;
-    if (db) return `/api/${db}${path}`;
-    return `/api${path}`;
+    return `/api/${this.databaseId}${path}`;
   }
 
   buildListPath(collection: string, options?: ListOptions): string {

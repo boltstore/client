@@ -18,7 +18,6 @@ export class Realtime {
     getToken: () => string | undefined,
     options?: {
       databaseId?: string;
-      database?: string;
       reconnect?: { strategy?: "exponential" | "fixed"; initialDelayMs?: number; maxDelayMs?: number; maxRetries?: number };
       heartbeatIntervalMs?: number;
     }

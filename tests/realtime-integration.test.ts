@@ -89,17 +89,10 @@ describe("BoltstoreClient — realtime integration", () => {
     expect(ws.url).toContain("database=dbs_abc");
   });
 
-  test("realtime connects with database from client (fallback)", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "myapp" });
-    client.realtime.connect();
-    const ws = MockWebSocket._last()!;
-    expect(ws.url).toContain("database=myapp");
-  });
-
   test("realtime config can be passed via ClientConfig", () => {
     const client = new BoltstoreClient({
       baseUrl: "http://localhost:8080",
-      database: "myapp",
+      databaseId: "dbs_abc",
       realtime: { url: "ws://localhost:8080" },
     });
     client.realtime.connect();
@@ -108,7 +101,7 @@ describe("BoltstoreClient — realtime integration", () => {
   });
 
   test("subscribe auto-connects and sends subscribe message", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", database: "myapp" });
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_abc" });
     client.realtime.subscribe("posts", () => {});
     const ws = MockWebSocket._last()!;
     expect(ws).toBeDefined();
