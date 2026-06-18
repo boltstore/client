@@ -24,6 +24,7 @@ import { createAuthApi } from "./api/auth";
 import { createHealthApi } from "./api/health";
 import { createCollectionsApi } from "./api/collections";
 import { createRecordsApi } from "./api/records";
+import { Realtime } from "./ws/realtime";
 
 export { BoltstoreError };
 export { TypedCollectionImpl } from "./typed-collection";
@@ -46,11 +47,13 @@ export class BoltstoreClient {
   private databaseId: string | undefined;
   private token: string | undefined;
   private refreshToken: string | undefined;
+  private realtimeConfig: ClientConfig["realtime"];
 
   auth: ReturnType<typeof createAuthApi>;
   health: ReturnType<typeof createHealthApi>;
   collections: ReturnType<typeof createCollectionsApi>;
   records: ReturnType<typeof createRecordsApi>;
+  private _realtime: Realtime | null = null;
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
@@ -69,11 +72,27 @@ export class BoltstoreClient {
     this.databaseId = config.databaseId;
     this.token = config.token;
     this.refreshToken = config.refreshToken;
+    this.realtimeConfig = config.realtime;
 
     this.auth = createAuthApi(this);
     this.health = createHealthApi(this);
     this.collections = createCollectionsApi(this);
     this.records = createRecordsApi(this);
+  }
+
+  get realtime(): Realtime {
+    if (!this._realtime) {
+      this._realtime = new Realtime(
+        this.baseUrl,
+        () => this.token,
+        {
+          databaseId: this.databaseId,
+          database: this.database,
+          ...this.realtimeConfig,
+        },
+      );
+    }
+    return this._realtime;
   }
 
   collection<Fields = Record<string, unknown>>(name: string): TypedCollection<Fields> {

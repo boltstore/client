@@ -97,6 +97,35 @@ interface QueryOptions {
 }
 ```
 
+### Realtime
+
+```typescript
+// Subscribe to collection changes
+const unsubscribe = client.realtime.subscribe("posts", (event) => {
+  console.log("Change:", event);
+});
+
+// Subscribe with recordId and filter
+client.realtime.subscribe("posts", {
+  recordId: "rec_123",
+  filter: { status: "published" },
+  onEvent: (event) => console.log("Event:", event),
+  onError: (err) => console.error("Error:", err),
+});
+
+// Unsubscribe
+unsubscribe();
+
+// Lifecycle hooks
+client.realtime.onConnected(() => console.log("Connected"));
+client.realtime.onDisconnected(() => console.log("Disconnected"));
+
+// Manual connection control
+client.realtime.connect();
+client.realtime.disconnect();
+client.realtime.close();
+```
+
 ## Development
 
 ```bash

@@ -1,4 +1,4 @@
-import type { PaginationMeta, ListOptions, BatchResult, BoltstoreRecord } from "@boltstore/utils";
+import type { PaginationMeta, ListOptions, BatchResult, BoltstoreRecord, WsClientConfig } from "@boltstore/utils";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -29,6 +29,8 @@ export interface ClientConfig {
   databaseId?: string;
   token?: string;
   refreshToken?: string;
+  /** Optional WebSocket configuration for realtime subscriptions. */
+  realtime?: WsClientConfig;
 }
 
 export interface HealthCheck {

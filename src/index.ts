@@ -41,4 +41,11 @@ export type {
   FilterOperator,
   SortSpec,
   PaginationMeta,
+  WsClientConfig,
+  ConnectionState,
+  ReconnectConfig,
+  SubscriptionState,
+  RecordEvent,
 } from "@boltstore/utils";
+
+export { Realtime, type SubscribeOptions, type SubscribeCallback } from "./ws/realtime";

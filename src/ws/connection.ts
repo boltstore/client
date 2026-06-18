@@ -23,6 +23,7 @@ export class RealtimeConnection {
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
+  private pendingMessages: string[] = [];
 
   private url: string;
   private databaseId?: string;
@@ -81,6 +82,7 @@ export class RealtimeConnection {
       this.reconnectAttempts = 0;
       this.setState("connected");
       this.startHeartbeat();
+      this.flushPending();
     };
 
     this.ws.onmessage = (event: MessageEvent) => {
@@ -127,6 +129,7 @@ export class RealtimeConnection {
     this.closed = true;
     this.cancelReconnect();
     this.stopHeartbeat();
+    this.pendingMessages = [];
     if (this.ws) {
       this.ws.onclose = null;
       this.ws.onmessage = null;
@@ -142,6 +145,7 @@ export class RealtimeConnection {
   reconnect(): void {
     this.cancelReconnect();
     this.stopHeartbeat();
+    this.pendingMessages = [];
     if (this.ws) {
       this.ws.onclose = null;
       this.ws.onmessage = null;
@@ -156,9 +160,19 @@ export class RealtimeConnection {
   }
 
   send(message: Record<string, unknown>): void {
+    const data = JSON.stringify(message);
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
+      this.ws.send(data);
+    } else if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+      this.pendingMessages.push(data);
     }
+  }
+
+  private flushPending(): void {
+    for (const msg of this.pendingMessages) {
+      this.ws?.send(msg);
+    }
+    this.pendingMessages = [];
   }
 
   private setState(newState: ConnectionState): void {
