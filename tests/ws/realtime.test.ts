@@ -157,9 +157,11 @@ describe("Realtime", () => {
     ws._simulateOpen();
 
     realtime.subscribe("posts", () => {});
-    ws._simulateMessage(JSON.stringify({ type: "subscribed", subscriptionId: "sub_1" }));
+    const sub1 = JSON.parse(ws.sentMessages.find((m) => m.includes('"subscribe"')) ?? "{}");
+    ws._simulateMessage(JSON.stringify({ type: "subscribed", subscriptionId: "sub_1", localId: sub1.localId }));
     realtime.subscribe("comments", () => {});
-    ws._simulateMessage(JSON.stringify({ type: "subscribed", subscriptionId: "sub_2" }));
+    const sub2 = JSON.parse(ws.sentMessages.filter((m) => m.includes('"subscribe"')).pop() ?? "{}");
+    ws._simulateMessage(JSON.stringify({ type: "subscribed", subscriptionId: "sub_2", localId: sub2.localId }));
     ws.sentMessages.length = 0;
 
     realtime.unsubscribeAll();
@@ -200,8 +202,9 @@ describe("Realtime", () => {
     const ws = MockWebSocket._last()!;
     ws._simulateOpen();
 
-    // Simulate server ack
-    ws._simulateMessage(JSON.stringify({ type: "subscribed", subscriptionId: "sub_1" }));
+    // Simulate server ack with localId
+    const subMsg = JSON.parse(ws.sentMessages.find((m) => m.includes('"subscribe"')) ?? "{}");
+    ws._simulateMessage(JSON.stringify({ type: "subscribed", subscriptionId: "sub_1", localId: subMsg.localId }));
 
     // Simulate event
     ws._simulateMessage(JSON.stringify({

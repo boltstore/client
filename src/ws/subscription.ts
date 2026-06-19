@@ -165,38 +165,18 @@ export class SubscriptionManager {
   }
 
   private handleSubscribed(serverSubscriptionId: string, localId?: string): void {
-    if (localId && this.pending.has(localId)) {
-      // Deterministic matching via localId (preferred path)
-      const pending = this.pending.get(localId)!;
-      this.pending.delete(localId);
-      this.localToServer.set(localId, serverSubscriptionId);
-      this.serverToLocal.set(serverSubscriptionId, localId);
-      const active: ActiveSubscription = {
-        subscriptionId: serverSubscriptionId,
-        collection: pending.collection,
-        recordId: pending.recordId,
-        filter: pending.filter,
-        onEvent: pending.onEvent,
-        onError: pending.onError,
-      };
-      this.active.set(serverSubscriptionId, active);
-      return;
-    }
-
-    // Fallback: FIFO matching (server doesn't support localId)
-    if (this.pending.size === 0) return;
-    const firstPending = this.pending.values().next().value;
-    if (!firstPending) return;
-    this.pending.delete(firstPending.localId);
-    this.localToServer.set(firstPending.localId, serverSubscriptionId);
-    this.serverToLocal.set(serverSubscriptionId, firstPending.localId);
+    if (!localId || !this.pending.has(localId)) return;
+    const pending = this.pending.get(localId)!;
+    this.pending.delete(localId);
+    this.localToServer.set(localId, serverSubscriptionId);
+    this.serverToLocal.set(serverSubscriptionId, localId);
     const active: ActiveSubscription = {
       subscriptionId: serverSubscriptionId,
-      collection: firstPending.collection,
-      recordId: firstPending.recordId,
-      filter: firstPending.filter,
-      onEvent: firstPending.onEvent,
-      onError: firstPending.onError,
+      collection: pending.collection,
+      recordId: pending.recordId,
+      filter: pending.filter,
+      onEvent: pending.onEvent,
+      onError: pending.onError,
     };
     this.active.set(serverSubscriptionId, active);
   }

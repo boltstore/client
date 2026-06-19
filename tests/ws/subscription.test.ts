@@ -7,10 +7,13 @@ function createManager(): {
   sent: Record<string, unknown>[];
   messages: ((data: unknown) => void)[];
   stateHandlers: ((state: ConnectionState) => void)[];
+  /** Simulate a server ack for the most recent subscribe message. */
+  ackLastSubscribe: () => void;
 } {
   const sent: Record<string, unknown>[] = [];
   const messages: ((data: unknown) => void)[] = [];
   const stateHandlers: ((state: ConnectionState) => void)[] = [];
+  let ackCounter = 0;
 
   const manager = new SubscriptionManager(
     (msg) => sent.push(msg),
@@ -18,7 +21,16 @@ function createManager(): {
     (handler) => stateHandlers.push(handler),
   );
 
-  return { manager, sent, messages, stateHandlers };
+  function ackLastSubscribe(): void {
+    ackCounter++;
+    const last = sent.filter((m) => m.type === "subscribe").pop();
+    const localId = last?.localId as string | undefined;
+    if (localId && messages[0]) {
+      messages[0]({ type: "subscribed", subscriptionId: `sub_server_${ackCounter}`, localId });
+    }
+  }
+
+  return { manager, sent, messages, stateHandlers, ackLastSubscribe };
 }
 
 function simulateConnected(stateHandlers: ((state: ConnectionState) => void)[]): void {
@@ -61,7 +73,7 @@ describe("SubscriptionManager", () => {
     expect(active[0].collection).toBe("posts");
 
     // Simulate server ack
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_server_1" });
+    ctx.ackLastSubscribe();
 
     const updated = ctx.manager.getActiveSubscriptions();
     expect(updated).toHaveLength(1);
@@ -70,7 +82,7 @@ describe("SubscriptionManager", () => {
 
   test("unsubscribe sends unsubscribe message and removes subscription", () => {
     const subId = ctx.manager.subscribe("posts", { onEvent: () => {} });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_server_1" });
+    ctx.ackLastSubscribe();
 
     ctx.manager.unsubscribe("sub_server_1");
 
@@ -87,9 +99,9 @@ describe("SubscriptionManager", () => {
 
   test("unsubscribeAll clears all subscriptions", () => {
     ctx.manager.subscribe("posts", { onEvent: () => {} });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_1" });
+    ctx.ackLastSubscribe();
     ctx.manager.subscribe("comments", { onEvent: () => {} });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_2" });
+    ctx.ackLastSubscribe();
 
     ctx.manager.unsubscribeAll();
 
@@ -101,7 +113,7 @@ describe("SubscriptionManager", () => {
   test("incoming event dispatches to matching subscription callback", () => {
     const events: unknown[] = [];
     ctx.manager.subscribe("posts", { onEvent: (e) => events.push(e) });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_1" });
+    ctx.ackLastSubscribe();
 
     const recordEvent = {
       type: "event",
@@ -119,7 +131,7 @@ describe("SubscriptionManager", () => {
   test("event does not dispatch to non-matching collection", () => {
     const events: unknown[] = [];
     ctx.manager.subscribe("posts", { onEvent: (e) => events.push(e) });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_1" });
+    ctx.ackLastSubscribe();
 
     ctx.messages[0]({
       type: "event",
@@ -138,7 +150,7 @@ describe("SubscriptionManager", () => {
       recordId: "rec_1",
       onEvent: (e) => events.push(e),
     });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_1" });
+    ctx.ackLastSubscribe();
 
     ctx.messages[0]({
       type: "event",
@@ -157,7 +169,7 @@ describe("SubscriptionManager", () => {
       recordId: "rec_1",
       onEvent: (e) => events.push(e),
     });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_1" });
+    ctx.ackLastSubscribe();
 
     ctx.messages[0]({
       type: "event",
@@ -176,7 +188,7 @@ describe("SubscriptionManager", () => {
       filter: { status: "published" },
       onEvent: (e) => events.push(e),
     });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_1" });
+    ctx.ackLastSubscribe();
 
     // Record with non-matching filter
     ctx.messages[0]({
@@ -205,7 +217,7 @@ describe("SubscriptionManager", () => {
       onEvent: () => {},
       onError: (e) => errors.push(e),
     });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_1" });
+    ctx.ackLastSubscribe();
 
     ctx.messages[0]({ type: "error", code: "NO_DATABASE", message: "No database" });
 
@@ -215,9 +227,9 @@ describe("SubscriptionManager", () => {
 
   test("auto-resubscribes on reconnect", () => {
     ctx.manager.subscribe("posts", { onEvent: () => {} });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_1" });
+    ctx.ackLastSubscribe();
     ctx.manager.subscribe("comments", { onEvent: () => {} });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_2" });
+    ctx.ackLastSubscribe();
 
     // Clear sent messages
     ctx.sent.length = 0;
@@ -235,7 +247,7 @@ describe("SubscriptionManager", () => {
 
   test("getActiveSubscriptions returns both pending and active", () => {
     ctx.manager.subscribe("posts", { onEvent: () => {} });
-    ctx.messages[0]({ type: "subscribed", subscriptionId: "sub_1" });
+    ctx.ackLastSubscribe();
     ctx.manager.subscribe("comments", { onEvent: () => {} });
 
     const subs = ctx.manager.getActiveSubscriptions();
