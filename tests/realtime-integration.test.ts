@@ -86,7 +86,7 @@ describe("BoltstoreClient — realtime integration", () => {
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_abc" });
     client.realtime.connect();
     const ws = MockWebSocket._last()!;
-    expect(ws.url).toContain("database=dbs_abc");
+    expect(ws.url).toContain("db=dbs_abc");
   });
 
   test("realtime config can be passed via ClientConfig", () => {

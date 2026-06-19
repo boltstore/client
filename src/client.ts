@@ -47,6 +47,8 @@ export class BoltstoreClient {
   private token: string | undefined;
   private refreshToken: string | undefined;
   private realtimeConfig: ClientConfig["realtime"];
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private closed = false;
 
   auth: ReturnType<typeof createAuthApi>;
   health: ReturnType<typeof createHealthApi>;
@@ -65,6 +67,15 @@ export class BoltstoreClient {
     this.health = createHealthApi(this);
     this.collections = createCollectionsApi(this);
     this.records = createRecordsApi(this);
+  }
+
+  /** Dispose the client, cancelling any in-flight retries. */
+  dispose(): void {
+    this.closed = true;
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
   }
 
   get realtime(): Realtime {
@@ -120,36 +131,43 @@ export class BoltstoreClient {
 
     let lastError: Error | undefined;
     for (let attempt = 0; attempt <= retries; attempt++) {
+      if (this.closed) throw new BoltstoreError(0, "CLIENT_DISPOSED", "Client has been disposed.");
       try {
         const response = await globalThis.fetch(`${this.baseUrl}${path}`, init);
-        let json: ApiResponse<T>;
         const contentType = response.headers.get("Content-Type") || "";
-        if (!contentType.includes("application/json")) {
-          const text = await response.text();
-          throw new BoltstoreError(
-            response.status,
-            "INVALID_RESPONSE",
-            `Expected JSON response, got ${contentType} (status ${response.status}): ${text.slice(0, 200)}`
-          );
-        }
+        let text: string | undefined;
+        // Always try to get the body as text first for better error handling
         try {
-          json = (await response.json()) as ApiResponse<T>;
+          text = await response.text();
         } catch {
-          throw new BoltstoreError(response.status, "PARSE_ERROR", `Failed to parse response from Boltstore server (status ${response.status}).`);
+          // Response body may be empty
         }
-        if (json.error) {
-          throw new BoltstoreError(response.status, json.error.code, json.error.message, json.error.details);
+        if (contentType.includes("application/json") || (text && (text.startsWith("{") || text.startsWith("[")))) {
+          try {
+            const json = text ? JSON.parse(text) : {};
+            if (json.error) {
+              throw new BoltstoreError(response.status, json.error.code, json.error.message, json.error.details);
+            }
+            return json as ApiResponse<T>;
+          } catch (err) {
+            if (err instanceof BoltstoreError) throw err;
+            throw new BoltstoreError(response.status, "PARSE_ERROR", `Failed to parse response from Boltstore server (status ${response.status}).`);
+          }
         }
-        return json;
+        throw new BoltstoreError(
+          response.status,
+          "INVALID_RESPONSE",
+          `Expected JSON response, got ${contentType} (status ${response.status}): ${(text || "").slice(0, 200)}`
+        );
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         const isNetworkError = lastError.message.includes("fetch") || lastError.message.includes("network");
-        if (attempt < retries && isNetworkError) {
+        if (attempt < retries && isNetworkError && !this.closed) {
+          const delay = 500 * (attempt + 1);
           await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, 500 * (attempt + 1));
-            // Allow the timer to be cancelled if the client is disposed
-            if (typeof timer === "object" && "unref" in timer) (timer as { unref(): void }).unref();
+            this.retryTimer = setTimeout(resolve, delay);
           });
+          this.retryTimer = null;
           continue;
         }
         break;

@@ -69,7 +69,7 @@ export class RealtimeConnection {
     const params = new URLSearchParams();
     const token = this.getToken();
     if (token) params.set("token", token);
-    if (this.databaseId) params.set("database", this.databaseId);
+    if (this.databaseId) params.set("db", this.databaseId);
 
     const wsUrl = `${this.url}/ws?${params.toString()}`;
     this.ws = new WebSocket(wsUrl);

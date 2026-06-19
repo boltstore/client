@@ -102,7 +102,7 @@ describe("RealtimeConnection", () => {
     const ws = MockWebSocket._last();
     expect(ws).toBeDefined();
     expect(ws!.url).toContain("token=test-token");
-    expect(ws!.url).toContain("database=dbs_abc");
+    expect(ws!.url).toContain("db=dbs_abc");
   });
 
   test("connect sets state to connecting then connected on open", () => {
@@ -255,14 +255,14 @@ describe("RealtimeConnection", () => {
     });
     conn.connect();
     const ws = MockWebSocket._last()!;
-    expect(ws!.url).toContain("database=dbs_abc");
+    expect(ws!.url).toContain("db=dbs_abc");
   });
 
   test("omits database param when no databaseId set", () => {
     conn = new RealtimeConnection("http://localhost:8080", tokenProvider);
     conn.connect();
     const ws = MockWebSocket._last()!;
-    expect(ws!.url).not.toContain("database=");
+    expect(ws!.url).not.toContain("db=");
   });
 
   test("omits token param when no token available", () => {

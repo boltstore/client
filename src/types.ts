@@ -33,7 +33,7 @@ export interface HealthCheck {
   version: string;
   uptime: number;
   timestamp: string;
-  databases?: Array<{ name: string; created_at: string }>;
+  databases?: Array<{ id?: string; name: string; path?: string; created_at: string }>;
   database_list?: string[];
 }
 
