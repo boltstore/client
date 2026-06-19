@@ -118,9 +118,6 @@ export class BoltstoreClient {
   }
 
   async request<T = unknown>(method: HttpMethod, path: string, body?: unknown, retries = 1): Promise<ApiResponse<T>> {
-    if (this.refreshToken && this.token) {
-      try { await this.auth.autoRefresh(); } catch { /* ignore auto-refresh failures */ }
-    }
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "Accept": "application/json",
@@ -142,6 +139,32 @@ export class BoltstoreClient {
         } catch {
           // Response body may be empty
         }
+
+        // Handle 401 Unauthorized — attempt token refresh and retry once
+        if (response.status === 401 && this.refreshToken && !path.endsWith("/auth/refresh") && !path.endsWith("/auth/login")) {
+          try {
+            await this.auth.autoRefresh();
+            // Update the Authorization header with the new token and retry
+            headers["Authorization"] = `Bearer ${this.token}`;
+            const retryResponse = await globalThis.fetch(`${this.baseUrl}${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+            const retryText = await retryResponse.text();
+            if (retryText) {
+              try {
+                const retryJson = JSON.parse(retryText);
+                if (retryJson.error) {
+                  throw new BoltstoreError(retryResponse.status, retryJson.error.code, retryJson.error.message, retryJson.error.details);
+                }
+                return retryJson as ApiResponse<T>;
+              } catch (err) {
+                if (err instanceof BoltstoreError) throw err;
+                if (retryResponse.ok) return JSON.parse(retryText) as ApiResponse<T>;
+              }
+            }
+          } catch {
+            // Refresh failed — fall through to original error handling
+          }
+        }
+
         if (contentType.includes("application/json") || (text && (text.startsWith("{") || text.startsWith("[")))) {
           try {
             const json = text ? JSON.parse(text) : {};
