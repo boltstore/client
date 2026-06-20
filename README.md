@@ -154,7 +154,70 @@ console.log(state?.cursor, state?.lastSyncAt);
 
 // Sync status
 const status = client.sync.status();
-console.log(status.running, status.lastCursor);
+console.log(status.running, status.lastCursor, status.queueSize, status.isOnline);
+
+// Offline queue — operations are queued when network fails
+// and replayed automatically when connectivity returns.
+status.queueSize; // number of pending operations
+status.isOnline;  // current connectivity state
+
+// Manually flush queued operations
+await client.sync.flushQueue();
+```
+
+### SyncStore (Persistent Offline Queue)
+
+The offline queue stores pending operations in a `SyncStore`. Three built-in adapters are available, or you can provide your own.
+
+**InMemoryStore (default)** — volatile, cleared on app restart:
+
+```typescript
+import { SyncManager } from "@boltstore/client";
+const sync = new SyncManager(client, { store: new InMemoryStore() });
+```
+
+**WebStore (localStorage)** — persists across page reloads in browsers:
+
+```typescript
+import { createWebStore } from "@boltstore/client";
+const sync = new SyncManager(client, { store: createWebStore() });
+```
+
+**FileStore (Node.js / Bun)** — persists to the filesystem:
+
+```typescript
+import { createFileStore } from "@boltstore/client";
+const sync = new SyncManager(client, { store: await createFileStore("./sync-data") });
+```
+
+**Custom store** — any object implementing the `SyncStore` interface:
+
+```typescript
+import type { SyncStore } from "@boltstore/client";
+
+const store: SyncStore = {
+  get: async (key) => localStorage.getItem(key),
+  set: async (key, value) => localStorage.setItem(key, value),
+  remove: async (key) => localStorage.removeItem(key),
+  clear: async () => localStorage.clear(),
+};
+
+const sync = new SyncManager(client, { store });
+```
+
+For React Native, use AsyncStorage:
+
+```typescript
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const sync = new SyncManager(client, {
+  store: {
+    get: (k) => AsyncStorage.getItem(k),
+    set: (k, v) => AsyncStorage.setItem(k, v),
+    remove: (k) => AsyncStorage.removeItem(k),
+    clear: () => AsyncStorage.clear(),
+  },
+});
 ```
 
 ## Development

@@ -1,6 +1,6 @@
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from "bun:test";
 import { BoltstoreClient } from "../src/client";
-import { SyncManager } from "../src/sync";
+import { SyncManager, InMemoryStore, createWebStore } from "../src/sync";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -305,5 +305,165 @@ describe("SyncManager — dispose / cleanup", () => {
   test("sync module exported from client", async () => {
     const { SyncManager: ImportedSyncManager } = await import("../src/sync");
     expect(ImportedSyncManager).toBeDefined();
+  });
+});
+
+describe("SyncManager — offline queue", () => {
+  afterAll(() => {
+    globalThis.fetch = ORIGINAL_FETCH;
+  });
+
+  test("push queues operations on network error and returns queued status", async () => {
+    globalThis.fetch = async () => {
+      throw new Error("fetch failed");
+    };
+
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
+    const sync = new SyncManager(client);
+    const result = await sync.push([
+      { event: "create", collection: "posts", data: { title: "offline" } },
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(result.results[0].status).toBe("queued");
+    expect(sync.queueSize).toBe(1);
+    expect(sync.isOnline).toBe(false);
+  });
+
+  test("status reflects queue size and online state", async () => {
+    globalThis.fetch = async () => {
+      throw new Error("fetch failed");
+    };
+
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
+    const sync = new SyncManager(client);
+    await sync.push([{ event: "update", collection: "items", id: "r1", data: { x: 1 } }]);
+
+    const s = sync.status();
+    expect(s.queueSize).toBe(1);
+    expect(s.isOnline).toBe(false);
+  });
+
+  test("successful push restores online status and queue drains from flushQueue", async () => {
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
+    const sync = new SyncManager(client);
+    expect(sync.isOnline).toBe(true);
+
+    // Queue an operation via network error
+    globalThis.fetch = async () => { throw new Error("fetch failed"); };
+    await sync.push([{ event: "create", collection: "posts", data: { title: "queued" } }]);
+    expect(sync.queueSize).toBe(1);
+    expect(sync.isOnline).toBe(false);
+
+    // Restore connectivity and flush
+    globalThis.fetch = async () => {
+      return new Response(JSON.stringify({ data: { ok: true, results: [{ event: "create", collection: "posts", id: "r_ok", status: "created" }] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    await sync.flushQueue();
+    expect(sync.queueSize).toBe(0);
+    expect(sync.isOnline).toBe(true);
+  });
+
+  test("custom store persists queue across SyncManager instances", async () => {
+    const store = new InMemoryStore();
+    globalThis.fetch = async () => { throw new Error("fetch failed"); };
+
+    const client1 = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
+    const sync1 = new SyncManager(client1, { store });
+    await sync1.push([{ event: "create", collection: "posts", data: { title: "persist_test" } }]);
+    expect(sync1.queueSize).toBe(1);
+
+    // New SyncManager with same store should restore queue
+    const sync2 = new SyncManager(client1, { store });
+    await sync2.start();
+    expect(sync2.queueSize).toBe(1);
+    sync2.stop();
+  });
+
+  test("onOnline and onOffline callbacks fire on connectivity changes", async () => {
+    const onlineCalls: boolean[] = [];
+    globalThis.fetch = async () => { throw new Error("fetch failed"); };
+
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
+    const sync = new SyncManager(client, {
+      onOnline: () => { onlineCalls.push(true); },
+      onOffline: () => { onlineCalls.push(false); },
+    });
+
+    // Push triggers offline
+    await sync.push([{ event: "create", collection: "x", data: { n: 1 } }]);
+    expect(onlineCalls).toContain(false);
+
+    // Successful operation triggers online
+    globalThis.fetch = async () => {
+      return new Response(JSON.stringify({ data: { ok: true, results: [{ event: "create", collection: "x", id: "r1", status: "created" }] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    await sync.push([{ event: "create", collection: "x", data: { n: 2 } }]);
+    expect(onlineCalls).toContain(true);
+  });
+
+  test("InMemoryStore get/set/remove/clear round-trips", async () => {
+    const store = new InMemoryStore();
+    expect(await store.get("key1")).toBeNull();
+    await store.set("key1", "val1");
+    expect(await store.get("key1")).toBe("val1");
+    await store.set("key2", "val2");
+    await store.remove("key1");
+    expect(await store.get("key1")).toBeNull();
+    expect(await store.get("key2")).toBe("val2");
+    await store.clear();
+    expect(await store.get("key2")).toBeNull();
+  });
+
+  test("createWebStore works when localStorage is available", async () => {
+    // In bun, localStorage is not available by default — this tests the fallback
+    const store = createWebStore();
+    expect(await store.get("test_key")).toBeNull();
+    await store.set("test_key", "hello");
+    // No localStorage in bun, so it's a no-op (returns null)
+    expect(await store.get("test_key")).toBeNull();
+  });
+
+  test("onQueueError fires for operations that exhaust retries", async () => {
+    let errorFired = false;
+    let failedOps: unknown[] = [];
+
+    // Step 1: queue via network error
+    globalThis.fetch = async () => { throw new Error("fetch failed"); };
+
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
+    const sync = new SyncManager(client, {
+      maxQueueRetries: 1,
+      onQueueError: (err, ops) => {
+        errorFired = true;
+        failedOps = ops;
+      },
+    });
+
+    await sync.push([{ event: "create", collection: "test", data: { x: 1 } }]);
+    expect(sync.queueSize).toBe(1);
+
+    // Step 2: flushQueue with server error — retries go from 0→1, pushed back
+    globalThis.fetch = async () => {
+      return new Response(JSON.stringify({ error: { code: "SERVER_ERROR", message: "Internal error" } }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    expect(errorFired).toBe(false);
+    await sync.flushQueue();
+    expect(errorFired).toBe(false); // Still not fired — one retry left
+
+    // Step 3: flush again — retries 1 >= 1, fires onQueueError
+    await sync.flushQueue();
+    expect(errorFired).toBe(true);
+    expect(failedOps).toHaveLength(1);
   });
 });

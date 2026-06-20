@@ -51,6 +51,7 @@ export type {
 export { Realtime, type SubscribeOptions, type SubscribeCallback } from "./ws/realtime";
 
 export { SyncManager, type SyncConfig } from "./sync";
+export { InMemoryStore, createWebStore, createFileStore, type SyncStore } from "./sync";
 export type {
   SyncStatus,
   SyncPullResult,
