@@ -25,6 +25,7 @@ import { createHealthApi } from "./api/health";
 import { createCollectionsApi } from "./api/collections";
 import { createRecordsApi } from "./api/records";
 import { Realtime } from "./ws/realtime";
+import { SyncManager, type SyncConfig } from "./sync";
 
 export { BoltstoreError };
 export { TypedCollectionImpl } from "./typed-collection";
@@ -47,6 +48,7 @@ export class BoltstoreClient {
   private token: string | undefined;
   private refreshToken: string | undefined;
   private realtimeConfig: ClientConfig["realtime"];
+  private syncConfig: ClientConfig["sync"];
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
 
@@ -55,6 +57,7 @@ export class BoltstoreClient {
   collections: ReturnType<typeof createCollectionsApi>;
   records: ReturnType<typeof createRecordsApi>;
   private _realtime: Realtime | null = null;
+  private _sync: SyncManager | null = null;
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
@@ -62,6 +65,7 @@ export class BoltstoreClient {
     this.token = config.token;
     this.refreshToken = config.refreshToken;
     this.realtimeConfig = config.realtime;
+    this.syncConfig = config.sync;
 
     this.auth = createAuthApi(this);
     this.health = createHealthApi(this);
@@ -90,6 +94,13 @@ export class BoltstoreClient {
       );
     }
     return this._realtime;
+  }
+
+  get sync(): SyncManager {
+    if (!this._sync) {
+      this._sync = new SyncManager(this, this.syncConfig);
+    }
+    return this._sync;
   }
 
   collection<Fields = Record<string, unknown>>(name: string): TypedCollection<Fields> {

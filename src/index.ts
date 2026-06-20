@@ -49,3 +49,13 @@ export type {
 } from "@boltstore/utils";
 
 export { Realtime, type SubscribeOptions, type SubscribeCallback } from "./ws/realtime";
+
+export { SyncManager, type SyncConfig } from "./sync";
+export type {
+  SyncStatus,
+  SyncPullResult,
+  SyncPushResult,
+  SyncChange,
+  SyncPushOperation,
+  SyncPushOperationResult,
+} from "./sync";

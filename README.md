@@ -126,6 +126,37 @@ client.realtime.disconnect();
 client.realtime.close();
 ```
 
+### Sync (Phase 4)
+
+```typescript
+// Pull changes since last sync
+const result = await client.sync.pull();
+console.log(result.changes);    // SyncChange[]
+console.log(result.cursor);     // cursor for next pull
+console.log(result.hasMore);    // whether more changes exist
+
+// Push local changes to server
+const pushResult = await client.sync.push([
+  { event: "create", collection: "posts", data: { title: "New" } },
+  { event: "update", collection: "posts", id: "rec_xxx", data: { title: "Updated" } },
+  { event: "delete", collection: "posts", id: "rec_yyy" },
+]);
+console.log(pushResult.ok, pushResult.results);
+
+// Periodic background sync
+await client.sync.start({ collections: ["posts", "comments"], intervalMs: 15000 });
+client.sync.stop();
+
+// Sync state persistence
+await client.sync.saveState();   // persists current cursor to server
+const state = await client.sync.getState();
+console.log(state?.cursor, state?.lastSyncAt);
+
+// Sync status
+const status = client.sync.status();
+console.log(status.running, status.lastCursor);
+```
+
 ## Development
 
 ```bash

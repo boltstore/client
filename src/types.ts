@@ -1,4 +1,5 @@
 import type { PaginationMeta, ListOptions, BatchResult, BoltstoreRecord, WsClientConfig } from "@boltstore/utils";
+import type { SyncConfig } from "./sync";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -26,6 +27,8 @@ export interface ClientConfig {
   refreshToken?: string;
   /** Optional WebSocket configuration for realtime subscriptions. */
   realtime?: WsClientConfig;
+  /** Optional sync configuration for push/pull sync. */
+  sync?: SyncConfig;
 }
 
 export interface HealthCheck {
