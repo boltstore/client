@@ -88,11 +88,13 @@ export async function createFileStore(dir: string): Promise<SyncStore> {
   };
 }
 
-async function loadFsModules(): Promise<{ fs: typeof import("node:fs"); path: typeof import("node:path") }> {
+async function loadFsModules() {
+  const fsId = "fs";
+  const pathId = "path";
   try {
     const [fs, path] = await Promise.all([
-      import("node:fs") as Promise<typeof import("node:fs")>,
-      import("node:path") as Promise<typeof import("node:path")>,
+      import(fsId) as Promise<any>,
+      import(pathId) as Promise<any>,
     ]);
     return { fs, path };
   } catch {
