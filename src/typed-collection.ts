@@ -19,7 +19,7 @@ export interface ApiResponse<T = unknown> {
 export interface MinimalClient {
   request<T = unknown>(method: HttpMethod, path: string, body?: unknown, retries?: number): Promise<ApiResponse<T>>;
   buildListPath(collection: string, options?: ListOptions): string;
-  localStore?: LocalStore;
+  localStore: LocalStore | null;
   /** Enqueue operations for offline sync. Called automatically on network errors. */
   enqueueSync?(ops: Array<{ event: "create" | "update" | "delete"; collection: string; id?: string; data?: Record<string, unknown> }>): void;
 }
@@ -38,7 +38,7 @@ export class TypedCollectionImpl<Fields> implements TypedCollection<Fields> {
     this.subManager = subManager ?? null;
   }
 
-  private get store(): LocalStore | undefined {
+  private get store(): LocalStore | null {
     return this.client.localStore;
   }
 
