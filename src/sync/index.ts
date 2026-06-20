@@ -168,8 +168,32 @@ export class SyncManager {
     const was = this._isOnline;
     this._isOnline = online;
     if (online && !was) {
-      this.flushQueue().catch(() => {});
+      this.flushQueue().catch(() => {}).then(() => {
+        // After flushing the queue, pull changes from server to ensure consistency
+        this.pull().catch(() => {});
+      });
     }
+  }
+
+  /** Pull latest changes from the server and apply to local store. */
+  async pull(): Promise<void> {
+    if (!this.localStore) return;
+    try {
+      const body: Record<string, unknown> = { cursor: 0 };
+      const res = await this.client.request<{ changes: any[] }>("POST", this.client.dbPath("/sync/pull"), body);
+      if (res.data?.changes?.length) {
+        const byCollection = new Map<string, any[]>();
+        for (const change of res.data.changes) {
+          if (change.collection?.startsWith("_")) continue;
+          const cols = byCollection.get(change.collection) ?? [];
+          cols.push(change);
+          byCollection.set(change.collection, cols);
+        }
+        for (const [col, changes] of byCollection) {
+          this.localStore.applyChanges(col, changes as any).catch(() => {});
+        }
+      }
+    } catch { /* best-effort */ }
   }
 
   listenForOnline(): void {

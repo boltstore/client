@@ -25,7 +25,7 @@ import type { LocalStore } from "./store/types";
 import { IndexedDbStore, MemoryStore } from "./store";
 import { RealtimeConnection } from "./ws/connection";
 import { SubscriptionManager } from "./ws/subscription";
-import { SyncManager, type SyncConfig } from "./sync";
+import { SyncManager } from "./sync";
 
 export { BoltstoreError };
 export type { TypedCollection } from "./typed-collection";
@@ -74,7 +74,7 @@ export class BoltstoreClient {
     this.collections = createCollectionsApi(this);
 
     // Internal sync manager for offline queue
-    this.syncMgr = new SyncManager(this, config.sync as SyncConfig | undefined);
+    this.syncMgr = new SyncManager(this);
     this.syncMgr.localStore = this.localStore;
 
     // Internal WebSocket connection for realtime sync
@@ -101,6 +101,16 @@ export class BoltstoreClient {
     });
 
     wsConn.connect();
+  }
+
+  /** Enqueue operations for offline sync. Called by TypedCollectionImpl on network errors. */
+  enqueueSync(ops: Array<{ event: "create" | "update" | "delete"; collection: string; id?: string; data?: Record<string, unknown> }>): void {
+    this.syncMgr.push(ops.map((op) => ({
+      event: op.event,
+      collection: op.collection,
+      id: op.id,
+      data: op.data,
+    }))).catch(() => {});
   }
 
   collection<Fields = Record<string, unknown>>(name: string): TypedCollection<Fields> {
@@ -143,6 +153,21 @@ export class BoltstoreClient {
         const response = await globalThis.fetch(`${this.baseUrl}${path}`, init);
         const contentType = response.headers.get("Content-Type") || "";
         const text = await response.text().catch(() => undefined);
+
+        // On 401, try token refresh once and retry
+        if (response.status === 401 && this.refreshToken && !path.endsWith("/auth/refresh") && !path.endsWith("/auth/login")) {
+          try {
+            await this.auth.autoRefresh();
+            headers["Authorization"] = `Bearer ${this.token}`;
+            const retryResponse = await globalThis.fetch(`${this.baseUrl}${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+            const retryText = await retryResponse.text().catch(() => undefined);
+            if (retryText) {
+              const retryJson = JSON.parse(retryText);
+              if (retryJson.error) throw new BoltstoreError(retryResponse.status, retryJson.error.code, retryJson.error.message, retryJson.error.details);
+              return retryJson as ApiResponse<T>;
+            }
+          } catch { /* refresh failed — fall through */ }
+        }
 
         if (contentType.includes("application/json") || (text && (text.startsWith("{") || text.startsWith("[")))) {
           try {
@@ -193,6 +218,8 @@ export class BoltstoreClient {
     if (options?.perPage !== undefined) params.set("per_page", String(options.perPage));
     if (options?.fields) params.set("fields", options.fields.join(","));
     if (options?.expand) params.set("expand", options.expand.join(","));
+    if (options?.search) params.set("search", options.search);
+    if (options?.searchFields) params.set("search_fields", options.searchFields.join(","));
     if (options?.filter) {
       for (const [k, v] of Object.entries(options.filter)) {
         if (v === null || v === undefined) continue;

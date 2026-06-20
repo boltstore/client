@@ -3,13 +3,21 @@ import type { LocalStore, QueryResult } from "./types";
 import { evaluateFilter, matchesSearch, applySort } from "./filter";
 
 const DB_NAME = "boltstore";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      // Drop old per-collection stores from v1 schema (prefixed with col_)
+      for (let i = 0; i < db.objectStoreNames.length; i++) {
+        const name = db.objectStoreNames[i];
+        if (name.startsWith("col_") || name === "col_") {
+          db.deleteObjectStore(name);
+        }
+      }
+      // Create the new single records store if not present
       if (!db.objectStoreNames.contains("records")) {
         const store = db.createObjectStore("records", { keyPath: ["collection", "id"] });
         store.createIndex("collection", "collection", { unique: false });
