@@ -220,6 +220,64 @@ const sync = new SyncManager(client, {
 });
 ```
 
+### LocalStore (Offline Queryable Cache)
+
+The `LocalStore` is an optional write-through cache that persists records locally for instant reads and offline resilience. When configured, all `records.*` calls and `client.query()` read from the local store first and write through after server confirmation. `SyncManager.pull()` also auto-applies pulled changes.
+
+**Enable it in the client config:**
+
+```typescript
+import { IndexedDbStore } from "@boltstore/client";
+
+const client = new BoltstoreClient({
+  baseUrl: "...",
+  databaseId: "dbs_xxx",
+  localStore: new IndexedDbStore(),  // browser
+});
+```
+
+**Available stores** — all implement the same `LocalStore` interface:
+
+| Store | Environment | Persistence | Dependencies |
+|---|---|---|---|
+| `MemoryStore` | All | No (in-memory) | None |
+| `IndexedDbStore` | Browser | Yes (IndexedDB) | None (browser built-in) |
+| `BunSqliteStore` | Bun | Yes (bun:sqlite) | None (Bun built-in) |
+| `NodeFileStore` | Node.js | Yes (JSON files) | None (fs built-in) |
+| `BetterSqlite3Store` | Node.js | Yes (SQLite) | `npm install better-sqlite3` |
+| `ReactNativeSqliteStore` | React Native (bare) | Yes (SQLite) | `npm install react-native-sqlite-storage` |
+| `ExpoSqliteStore` | React Native (Expo) | Yes (SQLite) | `npx expo install expo-sqlite` |
+
+**How it works:**
+
+```
+records.create/update/delete ──► SERVER (permission check) ──► localStore (write-through)
+client.query()                ──► localStore (cache hit)  ──► SERVER (miss) ──► localStore (cache fill)
+client.sync.pull()            ──► SERVER                  ──► localStore (auto-apply)
+records.get()                 ──► localStore (cache hit)  ──► SERVER (miss) ──► localStore (cache fill)
+```
+
+**System collections (`_`-prefixed) are never cached** as defense-in-depth.
+
+**Custom store** — implement the `LocalStore` interface for any backend:
+
+```typescript
+import type { LocalStore, QueryResult } from "@boltstore/client";
+import type { QueryOptions } from "@boltstore/utils";
+
+class MyCustomStore implements LocalStore {
+  async insert(collection: string, records: Record<string, unknown>[]): Promise<void> { /* ... */ }
+  async update(collection: string, id: string, data: Record<string, unknown>): Promise<void> { /* ... */ }
+  async delete(collection: string, id: string): Promise<void> { /* ... */ }
+  async find(collection: string, filter?: any, options?: any): Promise<Record<string, unknown>[]> { /* ... */ }
+  async get(collection: string, id: string): Promise<Record<string, unknown> | null> { /* ... */ }
+  async count(collection: string, filter?: any): Promise<number> { /* ... */ }
+  async distinct(collection: string, field: string): Promise<unknown[]> { /* ... */ }
+  async query(options: QueryOptions): Promise<QueryResult> { /* ... */ }
+  async applyChanges(collection: string, changes: any[]): Promise<void> { /* ... */ }
+}
+```
+
 ## Development
 
 ```bash

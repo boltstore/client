@@ -4,30 +4,74 @@ import type { PaginateOptions, PaginatedResult } from "../types";
 import { BoltstoreError } from "../errors";
 
 export function createRecordsApi(client: BoltstoreClient) {
+  const ls = () => client.localStore;
+  const isUserCol = (c: string) => !c.startsWith("_");
+
   return {
     create: async (collection: string, data: Record<string, unknown>): Promise<BoltstoreRecord> => {
       const res = await client.request<BoltstoreRecord>("POST", client.dbPath(`/collections/${collection}/records`), data);
+      if (res.data && ls() && isUserCol(collection)) {
+        await ls()!.insert(collection, [res.data as unknown as Record<string, unknown>]).catch(() => {});
+      }
       return res.data!;
     },
 
     list: async (collection: string, options?: ListOptions): Promise<BoltstoreRecord[]> => {
       const path = client.buildListPath(collection, options);
-      const res = await client.request<BoltstoreRecord[]>("GET", path);
-      return res.data ?? [];
+      const store = ls();
+      const userCol = isUserCol(collection);
+      try {
+        const res = await client.request<BoltstoreRecord[]>("GET", path);
+        if (res.data && store && userCol) {
+          await store.insert(collection, res.data as unknown as Record<string, unknown>[]).catch(() => {});
+        }
+        return res.data ?? [];
+      } catch {
+        if (store && userCol) {
+          const cached = await store.find(collection, options?.filter, {
+            sort: options?.sort,
+            direction: options?.direction,
+            limit: options?.limit,
+            offset: options?.offset,
+          });
+          return cached as unknown as BoltstoreRecord[];
+        }
+        throw new BoltstoreError(0, "NETWORK_ERROR", `Cannot reach server and no local cache for ${collection}.`);
+      }
     },
 
     get: async (collection: string, id: string): Promise<BoltstoreRecord> => {
-      const res = await client.request<BoltstoreRecord>("GET", client.dbPath(`/collections/${collection}/records/${id}`));
-      return res.data!;
+      const store = ls();
+      const userCol = isUserCol(collection);
+      try {
+        const res = await client.request<BoltstoreRecord>("GET", client.dbPath(`/collections/${collection}/records/${id}`));
+        if (res.data && store && userCol) {
+          await store.insert(collection, [res.data as unknown as Record<string, unknown>]).catch(() => {});
+        }
+        return res.data!;
+      } catch {
+        // Server unreachable — fall back to local cache
+        if (store && userCol) {
+          const cached = await store.get(collection, id);
+          if (cached) return cached as unknown as BoltstoreRecord;
+        }
+        throw new BoltstoreError(0, "NETWORK_ERROR", `Cannot reach server and no local cache for ${collection}/${id}.`);
+      }
     },
 
     update: async (collection: string, id: string, data: Record<string, unknown>): Promise<BoltstoreRecord> => {
       const res = await client.request<BoltstoreRecord>("PATCH", client.dbPath(`/collections/${collection}/records/${id}`), data);
+      if (res.data && ls() && isUserCol(collection)) {
+        await ls()!.update(collection, id, res.data as unknown as Record<string, unknown>).catch(() => {});
+      }
       return res.data!;
     },
 
     delete: async (collection: string, id: string): Promise<void> => {
       await client.request("DELETE", client.dbPath(`/collections/${collection}/records/${id}`));
+      if (ls() && isUserCol(collection)) {
+        await ls()!.delete(collection, id).catch(() => {});
+      }
     },
 
     count: async (collection: string, filter?: Record<string, unknown>): Promise<number> => {

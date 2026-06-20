@@ -1,5 +1,6 @@
 import type { PaginationMeta, ListOptions, BatchResult, BoltstoreRecord, WsClientConfig } from "@boltstore/utils";
 import type { SyncConfig } from "./sync";
+import type { LocalStore } from "./store/types";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -29,6 +30,8 @@ export interface ClientConfig {
   realtime?: WsClientConfig;
   /** Optional sync configuration for push/pull sync. */
   sync?: SyncConfig;
+  /** Optional local store for offline query support and write-through caching. */
+  localStore?: LocalStore;
 }
 
 export interface HealthCheck {

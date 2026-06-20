@@ -24,6 +24,7 @@ import { createAuthApi } from "./api/auth";
 import { createHealthApi } from "./api/health";
 import { createCollectionsApi } from "./api/collections";
 import { createRecordsApi } from "./api/records";
+import type { LocalStore } from "./store/types";
 import { Realtime } from "./ws/realtime";
 import { SyncManager, type SyncConfig } from "./sync";
 
@@ -58,6 +59,7 @@ export class BoltstoreClient {
   records: ReturnType<typeof createRecordsApi>;
   private _realtime: Realtime | null = null;
   private _sync: SyncManager | null = null;
+  localStore: LocalStore | null = null;
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
@@ -66,6 +68,7 @@ export class BoltstoreClient {
     this.refreshToken = config.refreshToken;
     this.realtimeConfig = config.realtime;
     this.syncConfig = config.sync;
+    this.localStore = config.localStore ?? null;
 
     this.auth = createAuthApi(this);
     this.health = createHealthApi(this);
@@ -124,8 +127,31 @@ export class BoltstoreClient {
   }
 
   async query(options: QueryOptions): Promise<{ data: BoltstoreRecord[]; meta: Record<string, unknown> }> {
-    const res = await this.request<BoltstoreRecord[]>("POST", this.dbPath("/query"), options);
-    return { data: res.data ?? [], meta: res.meta ?? {} };
+    const store = this.localStore;
+    const isUserCol = options.collection && !options.collection.startsWith("_");
+
+    let res: ApiResponse<BoltstoreRecord[]> | undefined;
+    try {
+      res = await this.request<BoltstoreRecord[]>("POST", this.dbPath("/query"), options);
+    } catch (serverError) {
+      // Server unreachable — fall back to local cache
+      if (store && isUserCol) {
+        try {
+          const cached = await store.query(options);
+          return cached as unknown as { data: BoltstoreRecord[]; meta: Record<string, unknown> };
+        } catch {
+          // Local store also failed — return empty result instead of throwing
+          return { data: [], meta: {} };
+        }
+      }
+      throw new BoltstoreError(0, "NETWORK_ERROR", "Cannot reach server and no local cache available.");
+    }
+
+    const result = { data: res.data ?? [], meta: res.meta ?? {} };
+    if (store && isUserCol && result.data.length > 0) {
+      await store.insert(options.collection, result.data as unknown as Record<string, unknown>[]).catch(() => {});
+    }
+    return result;
   }
 
   async request<T = unknown>(method: HttpMethod, path: string, body?: unknown, retries = 1): Promise<ApiResponse<T>> {

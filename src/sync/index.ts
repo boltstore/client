@@ -1,4 +1,5 @@
 import type { BoltstoreClient } from "../client";
+import type { LocalStore } from "../store/types";
 import { BoltstoreError } from "../errors";
 import { InMemoryStore, type SyncStore } from "./store";
 
@@ -57,7 +58,7 @@ export interface SyncPushResult {
 export interface SyncChange {
   id: string;
   seq: number;
-  event: string;
+  event: "create" | "update" | "delete";
   collection: string;
   recordId: string | null;
   record: Record<string, unknown>;
@@ -110,10 +111,12 @@ export class SyncManager {
   private store: SyncStore;
   private flushInProgress = false;
   private eventCleanup: (() => void) | null = null;
+  localStore: LocalStore | null = null;
 
   constructor(client: BoltstoreClient, config?: SyncConfig) {
     this.client = client;
     this.store = config?.store ?? new InMemoryStore();
+    this.localStore = client.localStore;
     this.config = {
       clientId: config?.clientId ?? "default",
       collections: config?.collections ?? [],
@@ -209,6 +212,19 @@ export class SyncManager {
       this._lastPullAt = new Date().toISOString();
       this.setOnline(true);
       this.config.onPull(res.data);
+
+      if (this.localStore && res.data.changes?.length > 0) {
+        const byCollection = new Map<string, typeof res.data.changes>();
+        for (const change of res.data.changes) {
+          if (change.collection.startsWith("_")) continue;
+          const cols = byCollection.get(change.collection) ?? [];
+          cols.push(change);
+          byCollection.set(change.collection, cols);
+        }
+        for (const [col, changes] of byCollection) {
+          this.localStore.applyChanges(col, changes).catch(() => {});
+        }
+      }
     }
 
     return res.data!;

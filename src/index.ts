@@ -61,3 +61,7 @@ export type {
   SyncPushOperationResult,
   SyncConflict,
 } from "./sync";
+
+export { MemoryStore, IndexedDbStore, BunSqliteStore, NodeFileStore, BetterSqlite3Store, ReactNativeSqliteStore, ExpoSqliteStore } from "./store";
+export type { LocalStore } from "./store/types";
+export { evaluateFilter, matchesSearch } from "./store/filter";
