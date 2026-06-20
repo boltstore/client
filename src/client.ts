@@ -1,8 +1,6 @@
 import type {
   ApiResponse,
-  BoltstoreRecord,
   ListOptions,
-  QueryOptions,
 } from "@boltstore/utils";
 
 import { BoltstoreError } from "./errors";
@@ -23,13 +21,13 @@ import type {
 import { createAuthApi } from "./api/auth";
 import { createHealthApi } from "./api/health";
 import { createCollectionsApi } from "./api/collections";
-import { createRecordsApi } from "./api/records";
 import type { LocalStore } from "./store/types";
-import { Realtime } from "./ws/realtime";
+import { IndexedDbStore, MemoryStore } from "./store";
+import { RealtimeConnection } from "./ws/connection";
+import { SubscriptionManager } from "./ws/subscription";
 import { SyncManager, type SyncConfig } from "./sync";
 
 export { BoltstoreError };
-export { TypedCollectionImpl } from "./typed-collection";
 export type { TypedCollection } from "./typed-collection";
 export type {
   TokenPair,
@@ -43,71 +41,75 @@ export type {
   TypedBatchOperation,
 };
 
+function detectLocalStore(): LocalStore {
+  if (typeof indexedDB !== "undefined") {
+    return new IndexedDbStore();
+  }
+  return new MemoryStore();
+}
+
 export class BoltstoreClient {
   private baseUrl: string;
   private databaseId: string;
   private token: string | undefined;
   private refreshToken: string | undefined;
-  private realtimeConfig: ClientConfig["realtime"];
-  private syncConfig: ClientConfig["sync"];
-  private retryTimer: ReturnType<typeof setTimeout> | null = null;
-  private closed = false;
+  private colRegistry = new Map<string, TypedCollectionImpl<unknown>>();
+  private subManager: SubscriptionManager;
+  private syncMgr: SyncManager;
 
   auth: ReturnType<typeof createAuthApi>;
   health: ReturnType<typeof createHealthApi>;
   collections: ReturnType<typeof createCollectionsApi>;
-  records: ReturnType<typeof createRecordsApi>;
-  private _realtime: Realtime | null = null;
-  private _sync: SyncManager | null = null;
-  localStore: LocalStore | null = null;
+  localStore: LocalStore;
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
     this.databaseId = config.databaseId;
     this.token = config.token;
     this.refreshToken = config.refreshToken;
-    this.realtimeConfig = config.realtime;
-    this.syncConfig = config.sync;
-    this.localStore = config.localStore ?? null;
+    this.localStore = config.localStore ?? detectLocalStore();
 
     this.auth = createAuthApi(this);
     this.health = createHealthApi(this);
     this.collections = createCollectionsApi(this);
-    this.records = createRecordsApi(this);
-  }
 
-  /** Dispose the client, cancelling any in-flight retries. */
-  dispose(): void {
-    this.closed = true;
-    if (this.retryTimer !== null) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
-    }
-  }
+    // Internal sync manager for offline queue
+    this.syncMgr = new SyncManager(this, config.sync as SyncConfig | undefined);
+    this.syncMgr.localStore = this.localStore;
 
-  get realtime(): Realtime {
-    if (!this._realtime) {
-      this._realtime = new Realtime(
-        this.baseUrl,
-        () => this.token,
-        {
-          databaseId: this.databaseId,
-          ...this.realtimeConfig,
-        },
-      );
-    }
-    return this._realtime;
-  }
+    // Internal WebSocket connection for realtime sync
+    const wsConn = new RealtimeConnection(
+      this.baseUrl,
+      () => this.token,
+      { databaseId: this.databaseId },
+    );
+    this.subManager = new SubscriptionManager(
+      (msg) => wsConn.send(msg),
+      (handler) => wsConn.onMessage(handler),
+      (handler) => wsConn.onStateChange(handler),
+    );
+    this.subManager.setLocalStore(this.localStore);
 
-  get sync(): SyncManager {
-    if (!this._sync) {
-      this._sync = new SyncManager(this, this.syncConfig);
-    }
-    return this._sync;
+    // Wire online/offline to sync queue
+    wsConn.onStateChange((state) => {
+      if (state === "connected") {
+        this.syncMgr.setOnline(true);
+        this.syncMgr.listenForOnline();
+      } else if (state === "disconnected" || state === "reconnecting") {
+        this.syncMgr.setOnline(false);
+      }
+    });
+
+    wsConn.connect();
   }
 
   collection<Fields = Record<string, unknown>>(name: string): TypedCollection<Fields> {
-    return new TypedCollectionImpl<Fields>(this, name, (path: string) => this.dbPath(path));
+    let col = this.colRegistry.get(name) as TypedCollectionImpl<Fields> | undefined;
+    if (!col) {
+      col = new TypedCollectionImpl<Fields>(this, name, (path: string) => this.dbPath(path), this.subManager);
+      this.colRegistry.set(name, col as TypedCollectionImpl<unknown>);
+    }
+    return col;
   }
 
   setToken(token: string | undefined): void {
@@ -126,34 +128,6 @@ export class BoltstoreClient {
     return this.refreshToken;
   }
 
-  async query(options: QueryOptions): Promise<{ data: BoltstoreRecord[]; meta: Record<string, unknown> }> {
-    const store = this.localStore;
-    const isUserCol = options.collection && !options.collection.startsWith("_");
-
-    let res: ApiResponse<BoltstoreRecord[]> | undefined;
-    try {
-      res = await this.request<BoltstoreRecord[]>("POST", this.dbPath("/query"), options);
-    } catch (serverError) {
-      // Server unreachable — fall back to local cache
-      if (store && isUserCol) {
-        try {
-          const cached = await store.query(options);
-          return cached as unknown as { data: BoltstoreRecord[]; meta: Record<string, unknown> };
-        } catch {
-          // Local store also failed — return empty result instead of throwing
-          return { data: [], meta: {} };
-        }
-      }
-      throw new BoltstoreError(0, "NETWORK_ERROR", "Cannot reach server and no local cache available.");
-    }
-
-    const result = { data: res.data ?? [], meta: res.meta ?? {} };
-    if (store && isUserCol && result.data.length > 0) {
-      await store.insert(options.collection, result.data as unknown as Record<string, unknown>[]).catch(() => {});
-    }
-    return result;
-  }
-
   async request<T = unknown>(method: HttpMethod, path: string, body?: unknown, retries = 1): Promise<ApiResponse<T>> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -165,42 +139,10 @@ export class BoltstoreClient {
 
     let lastError: Error | undefined;
     for (let attempt = 0; attempt <= retries; attempt++) {
-      if (this.closed) throw new BoltstoreError(0, "CLIENT_DISPOSED", "Client has been disposed.");
       try {
         const response = await globalThis.fetch(`${this.baseUrl}${path}`, init);
         const contentType = response.headers.get("Content-Type") || "";
-        let text: string | undefined;
-        // Always try to get the body as text first for better error handling
-        try {
-          text = await response.text();
-        } catch {
-          // Response body may be empty
-        }
-
-        // Handle 401 Unauthorized — attempt token refresh and retry once
-        if (response.status === 401 && this.refreshToken && !path.endsWith("/auth/refresh") && !path.endsWith("/auth/login")) {
-          try {
-            await this.auth.autoRefresh();
-            // Update the Authorization header with the new token and retry
-            headers["Authorization"] = `Bearer ${this.token}`;
-            const retryResponse = await globalThis.fetch(`${this.baseUrl}${path}`, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
-            const retryText = await retryResponse.text();
-            if (retryText) {
-              try {
-                const retryJson = JSON.parse(retryText);
-                if (retryJson.error) {
-                  throw new BoltstoreError(retryResponse.status, retryJson.error.code, retryJson.error.message, retryJson.error.details);
-                }
-                return retryJson as ApiResponse<T>;
-              } catch (err) {
-                if (err instanceof BoltstoreError) throw err;
-                if (retryResponse.ok) return JSON.parse(retryText) as ApiResponse<T>;
-              }
-            }
-          } catch {
-            // Refresh failed — fall through to original error handling
-          }
-        }
+        const text = await response.text().catch(() => undefined);
 
         if (contentType.includes("application/json") || (text && (text.startsWith("{") || text.startsWith("[")))) {
           try {
@@ -222,12 +164,11 @@ export class BoltstoreClient {
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         const isNetworkError = lastError.message.includes("fetch") || lastError.message.includes("network");
-        if (attempt < retries && isNetworkError && !this.closed) {
+        if (attempt < retries && isNetworkError) {
           const delay = 500 * (attempt + 1);
           await new Promise<void>((resolve) => {
-            this.retryTimer = setTimeout(resolve, delay);
+            setTimeout(resolve, delay);
           });
-          this.retryTimer = null;
           continue;
         }
         break;
@@ -263,5 +204,3 @@ export class BoltstoreClient {
     return this.dbPath(`/collections/${collection}/records`) + (qs ? `?${qs}` : "");
   }
 }
-
-export default BoltstoreClient;

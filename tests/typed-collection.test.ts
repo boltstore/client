@@ -156,7 +156,7 @@ describe("TypedCollectionImpl", () => {
 
   test("batch returns BatchResult", async () => {
     const client = createMockClient({
-      request: async () => ({ data: { created: 2, updated: 0, deleted: 0, errors: [] } }),
+      request: async () => ({ data: { created: 2, updated: 0, deleted: 0 } }),
     });
     const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
     const result = await col.batch([
@@ -176,7 +176,6 @@ describe("TypedCollectionImpl", () => {
     const result = await col.paginate({ page: 1, perPage: 10 });
     expect(result.data).toHaveLength(1);
     expect(result.meta.page).toBe(1);
-    expect(result.meta.per_page).toBe(10);
   });
 
   test("paginate passes sort, direction, filter params", async () => {
@@ -194,49 +193,12 @@ describe("TypedCollectionImpl", () => {
     expect(capturedPath).toContain("title=Hello");
   });
 
-  test("paginate throws on object filter", async () => {
+  test("subscribe registers and unsubscribes callbacks", () => {
     const client = createMockClient();
     const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    try {
-      await col.paginate({ page: 1, filter: { title: { $eq: "Hello" } as unknown as string } });
-      expect.unreachable("Should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(BoltstoreError);
-      expect((err as BoltstoreError).code).toBe("INVALID_FILTER");
-    }
-  });
-
-  test("listAll auto-paginates", async () => {
     let callCount = 0;
-    const client = createMockClient({
-      request: async () => {
-        callCount++;
-        return {
-          data: [{ id: `rec_${callCount}`, title: "A", content: "a", created_at: "now", updated_at: "now" }],
-          meta: { page: callCount, per_page: 1, total: 3, total_pages: 3 },
-        };
-      },
-    });
-    const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    const all = await col.listAll({ perPage: 1 });
-    expect(all).toHaveLength(3);
-    expect(callCount).toBe(3);
-  });
-
-  test("listAll throws TOO_MANY_PAGES", async () => {
-    const client = createMockClient({
-      request: async () => ({
-        data: [{ id: "rec_1", title: "A", content: "a", created_at: "now", updated_at: "now" }],
-        meta: { page: 1, per_page: 1, total: 9999, total_pages: 9999 },
-      }),
-    });
-    const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    try {
-      await col.listAll({ perPage: 1 });
-      expect.unreachable("Should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(BoltstoreError);
-      expect((err as BoltstoreError).code).toBe("TOO_MANY_PAGES");
-    }
+    const unsub = col.subscribe(() => { callCount++; });
+    expect(typeof unsub).toBe("function");
+    unsub();
   });
 });

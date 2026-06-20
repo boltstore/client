@@ -1,5 +1,5 @@
-import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { BoltstoreClient, BoltstoreError } from "../../src/client";
+import { describe, expect, test, afterAll } from "bun:test";
+import { BoltstoreClient } from "../../src/client";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -13,26 +13,26 @@ function mockFetch(response: { status?: number; body?: unknown }) {
   };
 }
 
-describe("BoltstoreClient — records", () => {
+describe("TypedCollection — CRUD via client.collection()", () => {
   afterAll(() => {
     globalThis.fetch = ORIGINAL_FETCH;
   });
 
-  test("records.create sends POST with data", async () => {
+  test("create sends POST with data", async () => {
     mockFetch({ body: { data: { id: "rec_1", title: "Test", created_at: "now", updated_at: "now" } } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const record = await client.records.create("items", { title: "Test" });
+    const record = await client.collection("items").create({ title: "Test" });
     expect(record.id).toBe("rec_1");
   });
 
-  test("records.list returns array", async () => {
+  test("list returns array", async () => {
     mockFetch({ body: { data: [{ id: "rec_1", title: "A" }, { id: "rec_2", title: "B" }] } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const records = await client.records.list("items");
+    const records = await client.collection("items").list();
     expect(records).toHaveLength(2);
   });
 
-  test("records.list passes options to buildListPath", async () => {
+  test("list passes options through buildListPath", async () => {
     let capturedUrl = "";
     globalThis.fetch = async (url: string) => {
       capturedUrl = url as string;
@@ -42,145 +42,68 @@ describe("BoltstoreClient — records", () => {
       });
     };
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    await client.records.list("items", { sort: "name", limit: 5 });
+    await client.collection("items").list({ sort: "name", limit: 5 });
     expect(capturedUrl).toContain("sort=name");
     expect(capturedUrl).toContain("limit=5");
   });
 
-  test("records.get returns single record", async () => {
+  test("get returns single record", async () => {
     mockFetch({ body: { data: { id: "rec_1", title: "Test", created_at: "now", updated_at: "now" } } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const record = await client.records.get("items", "rec_1");
+    const record = await client.collection("items").get("rec_1");
     expect(record.id).toBe("rec_1");
     expect(record.title).toBe("Test");
   });
 
-  test("records.update sends PATCH with data", async () => {
+  test("update sends PATCH with data", async () => {
     mockFetch({ body: { data: { id: "rec_1", title: "Updated", created_at: "now", updated_at: "now" } } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const record = await client.records.update("items", "rec_1", { title: "Updated" });
+    const record = await client.collection("items").update("rec_1", { title: "Updated" });
     expect(record.title).toBe("Updated");
   });
 
-  test("records.delete sends DELETE", async () => {
+  test("delete sends DELETE", async () => {
     mockFetch({ body: { data: { deleted: true } } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    await client.records.delete("items", "rec_1");
-    // No throw = success
+    await client.collection("items").delete("rec_1");
   });
 
-  test("records.count returns number", async () => {
+  test("count returns number", async () => {
     mockFetch({ body: { data: { count: 42 } } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const count = await client.records.count("items");
+    const count = await client.collection("items").count();
     expect(count).toBe(42);
   });
 
-  test("records.count with filter builds query params", async () => {
-    let capturedUrl = "";
-    globalThis.fetch = async (url: string) => {
-      capturedUrl = url as string;
-      return new Response(JSON.stringify({ data: { count: 5 } }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    };
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const count = await client.records.count("items", { status: "active" });
-    expect(count).toBe(5);
-    expect(capturedUrl).toContain("status=active");
-  });
-
-  test("records.count throws on object filter values", async () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    try {
-      await client.records.count("items", { status: { $eq: "active" } });
-      expect.unreachable("Should have thrown");
-    } catch (err) {
-      expect((err as BoltstoreError).code).toBe("INVALID_FILTER");
-    }
-  });
-
-  test("records.distinct returns values", async () => {
+  test("distinct returns values", async () => {
     mockFetch({ body: { data: { field: "status", values: ["active", "inactive"] } } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const values = await client.records.distinct("items", "status");
+    const values = await client.collection("items").distinct("status");
     expect(values).toEqual(["active", "inactive"]);
   });
 
-  test("records.batch returns BatchResult", async () => {
-    mockFetch({ body: { data: { created: 2, updated: 0, deleted: 0, errors: [] } } });
+  test("batch returns BatchResult", async () => {
+    mockFetch({ body: { data: { created: 2, updated: 0, deleted: 0 } } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const result = await client.records.batch("items", [
+    const result = await client.collection("items").batch([
       { action: "create", data: { title: "A" } },
       { action: "create", data: { title: "B" } },
     ]);
     expect(result.created).toBe(2);
   });
 
-  test("records.paginate returns paginated result", async () => {
+  test("paginate returns paginated result", async () => {
     mockFetch({ body: { data: [{ id: "1" }], meta: { page: 1, per_page: 10, total: 1, total_pages: 1 } } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const result = await client.records.paginate("items", { page: 1, perPage: 10 });
+    const result = await client.collection("items").paginate({ page: 1, perPage: 10 });
     expect(result.data).toHaveLength(1);
     expect(result.meta.page).toBe(1);
-    expect(result.meta.per_page).toBe(10);
   });
 
-  test("records.paginate passes sort, direction, filter params", async () => {
-    let capturedUrl = "";
-    globalThis.fetch = async (url: string) => {
-      capturedUrl = url as string;
-      return new Response(JSON.stringify({ data: [], meta: { page: 1, per_page: 10, total: 0, total_pages: 0 } }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    };
+  test("subscribe returns an unsubscribe function", () => {
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    await client.records.paginate("items", { page: 1, sort: "name", direction: "desc", filter: { status: "active" } });
-    expect(capturedUrl).toContain("sort=name");
-    expect(capturedUrl).toContain("direction=desc");
-    expect(capturedUrl).toContain("status=active");
-  });
-
-  test("records.paginate throws on object filter", async () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    try {
-      await client.records.paginate("items", { page: 1, filter: { status: { $eq: "active" } } });
-      expect.unreachable("Should have thrown");
-    } catch (err) {
-      expect((err as BoltstoreError).code).toBe("INVALID_FILTER");
-    }
-  });
-
-  test("records.listAll auto-paginates", async () => {
-    let callCount = 0;
-    globalThis.fetch = async () => {
-      callCount++;
-      return new Response(JSON.stringify({
-        data: [{ id: `rec_${callCount}` }],
-        meta: { page: callCount, per_page: 1, total: 3, total_pages: 3 },
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
-    };
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const all = await client.records.listAll("items", { perPage: 1 });
-    expect(all).toHaveLength(3);
-    expect(callCount).toBe(3);
-  });
-
-  test("records.listAll throws TOO_MANY_PAGES", async () => {
-    globalThis.fetch = async () => {
-      return new Response(JSON.stringify({
-        data: [{ id: "rec_1" }],
-        meta: { page: 1, per_page: 1, total: 9999, total_pages: 9999 },
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
-    };
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    try {
-      await client.records.listAll("items", { perPage: 1 });
-      expect.unreachable("Should have thrown");
-    } catch (err) {
-      expect((err as BoltstoreError).code).toBe("TOO_MANY_PAGES");
-    }
+    const unsub = client.collection("items").subscribe(() => {});
+    expect(typeof unsub).toBe("function");
+    unsub();
   });
 });

@@ -183,9 +183,25 @@ export class SubscriptionManager {
     this.active.set(serverSubscriptionId, active);
   }
 
+  private localStore: import("../store/types").LocalStore | null = null;
+
+  setLocalStore(store: import("../store/types").LocalStore | null): void {
+    this.localStore = store;
+  }
+
   private handleEvent(event: RecordEvent): void {
     if (event.seq != null && event.seq > this.lastSeq) {
       this.lastSeq = event.seq;
+    }
+    // Auto-apply to local store for cache synchronization
+    if (this.localStore && event.collection && !event.collection.startsWith("_")) {
+      const change = {
+        event: event.event,
+        recordId: (event.record.id as string) || null,
+        record: event.record,
+        previous: event.previous || null,
+      };
+      this.localStore.applyChanges(event.collection, [change]).catch(() => {});
     }
     for (const sub of this.active.values()) {
       if (sub.collection && sub.collection !== event.collection) continue;

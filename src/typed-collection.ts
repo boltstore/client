@@ -1,5 +1,6 @@
 import { BoltstoreError } from "./errors";
-import type { ListOptions, BatchResult } from "@boltstore/utils";
+import type { ListOptions, BatchResult, RecordEvent } from "@boltstore/utils";
+import type { LocalStore } from "./store/types";
 import type {
   TypedCollection,
   TypedBatchOperation,
@@ -18,51 +19,141 @@ export interface ApiResponse<T = unknown> {
 export interface MinimalClient {
   request<T = unknown>(method: HttpMethod, path: string, body?: unknown, retries?: number): Promise<ApiResponse<T>>;
   buildListPath(collection: string, options?: ListOptions): string;
+  localStore?: LocalStore;
 }
 
 export type { TypedCollection, TypedBatchOperation };
 
 export class TypedCollectionImpl<Fields> implements TypedCollection<Fields> {
+  private subManager: import("./ws/subscription").SubscriptionManager | null;
+
   constructor(
     private client: MinimalClient,
     private name: string,
     private dbPath: (path: string) => string,
-  ) {}
+    subManager?: import("./ws/subscription").SubscriptionManager,
+  ) {
+    this.subManager = subManager ?? null;
+  }
+
+  private get store(): LocalStore | undefined {
+    return this.client.localStore;
+  }
+
+  private get isUserCol(): boolean {
+    return !this.name.startsWith("_");
+  }
 
   async create(data: Omit<Fields, "id" | "created_at" | "updated_at">): Promise<TypedRecord<Fields>> {
+    // Optimistic local write
+    if (this.store && this.isUserCol) {
+      const localData = { ...data, id: crypto.randomUUID() };
+      await this.store.insert(this.name, [localData as unknown as Record<string, unknown>]).catch(() => {});
+      try {
+        const res = await this.client.request<TypedRecord<Fields>>(
+          "POST",
+          this.dbPath(`/collections/${this.name}/records`),
+          data as Record<string, unknown>,
+        );
+        // Reconcile: update local with server response
+        if (res.data && this.store) {
+          await this.store.update(this.name, localData.id as string, res.data as unknown as Record<string, unknown>).catch(() => {});
+        }
+        return res.data!;
+      } catch (err) {
+        // Revert local on failure
+        await this.store.delete(this.name, localData.id as string).catch(() => {});
+        throw err;
+      }
+    }
     const res = await this.client.request<TypedRecord<Fields>>(
       "POST",
       this.dbPath(`/collections/${this.name}/records`),
       data as Record<string, unknown>,
     );
+    if (res.data && this.store && this.isUserCol) {
+      await this.store.insert(this.name, [res.data as unknown as Record<string, unknown>]).catch(() => {});
+    }
     return res.data!;
   }
 
   async list(options?: ListOptions): Promise<TypedRecord<Fields>[]> {
     const path = this.client.buildListPath(this.name, options);
-    const res = await this.client.request<TypedRecord<Fields>[]>("GET", path);
-    return res.data ?? [];
+    try {
+      const res = await this.client.request<TypedRecord<Fields>[]>("GET", path);
+      if (res.data && this.store && this.isUserCol) {
+        await this.store.insert(this.name, res.data as unknown as Record<string, unknown>[]).catch(() => {});
+      }
+      return res.data ?? [];
+    } catch {
+      if (this.store && this.isUserCol) {
+        const cached = await this.store.find(this.name, options?.filter, {
+          sort: options?.sort,
+          direction: options?.direction,
+          limit: options?.limit,
+          offset: options?.offset,
+        });
+        return cached as unknown as TypedRecord<Fields>[];
+      }
+      throw new BoltstoreError(0, "NETWORK_ERROR", `Cannot reach server and no local cache for ${this.name}.`);
+    }
   }
 
   async get(id: string): Promise<TypedRecord<Fields>> {
-    const res = await this.client.request<TypedRecord<Fields>>(
-      "GET",
-      this.dbPath(`/collections/${this.name}/records/${id}`),
-    );
-    return res.data!;
+    try {
+      const res = await this.client.request<TypedRecord<Fields>>(
+        "GET",
+        this.dbPath(`/collections/${this.name}/records/${id}`),
+      );
+      if (res.data && this.store && this.isUserCol) {
+        await this.store.insert(this.name, [res.data as unknown as Record<string, unknown>]).catch(() => {});
+      }
+      return res.data!;
+    } catch {
+      if (this.store && this.isUserCol) {
+        const cached = await this.store.get(this.name, id);
+        if (cached) return cached as unknown as TypedRecord<Fields>;
+      }
+      throw new BoltstoreError(0, "NETWORK_ERROR", `Cannot reach server and no local cache for ${this.name}/${id}.`);
+    }
   }
 
   async update(id: string, data: Partial<Omit<Fields, "id" | "created_at" | "updated_at">>): Promise<TypedRecord<Fields>> {
-    const res = await this.client.request<TypedRecord<Fields>>(
-      "PATCH",
-      this.dbPath(`/collections/${this.name}/records/${id}`),
-      data as Record<string, unknown>,
-    );
-    return res.data!;
+    // Optimistic local write
+    if (this.store && this.isUserCol) {
+      await this.store.update(this.name, id, data as unknown as Record<string, unknown>).catch(() => {});
+    }
+    try {
+      const res = await this.client.request<TypedRecord<Fields>>(
+        "PATCH",
+        this.dbPath(`/collections/${this.name}/records/${id}`),
+        data as Record<string, unknown>,
+      );
+      if (res.data && this.store && this.isUserCol) {
+        await this.store.update(this.name, id, res.data as unknown as Record<string, unknown>).catch(() => {});
+      }
+      return res.data!;
+    } catch (err) {
+      if (this.store && this.isUserCol) {
+        await this.store.delete(this.name, id).catch(() => {});
+      }
+      throw err;
+    }
   }
 
   async delete(id: string): Promise<void> {
-    await this.client.request("DELETE", this.dbPath(`/collections/${this.name}/records/${id}`));
+    // Optimistic local delete
+    if (this.store && this.isUserCol) {
+      await this.store.delete(this.name, id).catch(() => {});
+    }
+    try {
+      await this.client.request("DELETE", this.dbPath(`/collections/${this.name}/records/${id}`));
+    } catch (err) {
+      if (this.store && this.isUserCol) {
+        await this.store.insert(this.name, [{ id } as unknown as Record<string, unknown>]).catch(() => {});
+      }
+      throw err;
+    }
   }
 
   async count(filter?: Partial<Fields & Record<string, unknown>>): Promise<number> {
@@ -85,7 +176,7 @@ export class TypedCollectionImpl<Fields> implements TypedCollection<Fields> {
   async distinct(field: keyof Fields & string): Promise<unknown[]> {
     const res = await this.client.request<{ field: string; values: unknown[] }>(
       "GET",
-      this.dbPath(`/collections/${this.name}/records/distinct?field=${encodeURIComponent(field)}`),
+      this.dbPath(`/collections/${this.name}/records/distinct?field=${encodeURIComponent(field as string)}`),
     );
     return res.data?.values ?? [];
   }
@@ -130,20 +221,13 @@ export class TypedCollectionImpl<Fields> implements TypedCollection<Fields> {
     };
   }
 
-  async listAll(options?: Omit<PaginateOptions, "page">): Promise<TypedRecord<Fields>[]> {
-    const perPage = options?.perPage ?? 100;
-    const maxPages = 1000;
-    const all: TypedRecord<Fields>[] = [];
-    let page = 1;
-
-    while (true) {
-      const result = await this.paginate({ ...options, page, perPage });
-      all.push(...result.data);
-      if (page >= result.meta.total_pages) break;
-      if (page >= maxPages) throw new BoltstoreError(400, "TOO_MANY_PAGES", `listAll stopped after ${maxPages} pages.`);
-      page++;
+  subscribe(callback: (event: RecordEvent) => void): () => void {
+    if (this.subManager) {
+      const localId = this.subManager.subscribe(this.name, { onEvent: callback });
+      return () => {
+        this.subManager?.unsubscribe(localId);
+      };
     }
-
-    return all;
+    return () => {};
   }
 }

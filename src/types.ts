@@ -1,5 +1,4 @@
-import type { PaginationMeta, ListOptions, BatchResult, BoltstoreRecord, WsClientConfig } from "@boltstore/utils";
-import type { SyncConfig } from "./sync";
+import type { PaginationMeta, ListOptions, BatchResult, BoltstoreRecord, RecordEvent } from "@boltstore/utils";
 import type { LocalStore } from "./store/types";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
@@ -26,11 +25,7 @@ export interface ClientConfig {
   databaseId: string;
   token?: string;
   refreshToken?: string;
-  /** Optional WebSocket configuration for realtime subscriptions. */
-  realtime?: WsClientConfig;
-  /** Optional sync configuration for push/pull sync. */
-  sync?: SyncConfig;
-  /** Optional local store for offline query support and write-through caching. */
+  /** Optional local store for offline query support and caching. Defaults to IndexedDbStore in browser. */
   localStore?: LocalStore;
 }
 
@@ -68,7 +63,7 @@ export interface TypedCollection<Fields> {
   distinct(field: keyof Fields & string): Promise<unknown[]>;
   batch(operations: TypedBatchOperation<Fields>[]): Promise<BatchResult>;
   paginate(options: PaginateOptions): Promise<PaginatedResult<TypedRecord<Fields>>>;
-  listAll(options?: Omit<PaginateOptions, "page">): Promise<TypedRecord<Fields>[]>;
+  subscribe(callback: (event: RecordEvent) => void): () => void;
 }
 
 export interface TypedBatchOperation<Fields> {

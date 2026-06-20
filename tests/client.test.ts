@@ -239,23 +239,6 @@ describe("BoltstoreClient — request", () => {
   });
 });
 
-describe("BoltstoreClient — query", () => {
-  beforeAll(() => {
-    mockFetch({ body: { data: [{ id: "1", title: "Result" }], meta: {} } });
-  });
-
-  afterAll(() => {
-    globalThis.fetch = ORIGINAL_FETCH;
-  });
-
-  test("query sends POST and returns results", async () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const result = await client.query({ collection: "items", filter: { title: { $eq: "Test" } } });
-    expect(result.data).toHaveLength(1);
-    expect(result.data[0].title).toBe("Result");
-  });
-});
-
 describe("BoltstoreClient — token management", () => {
   test("setToken and getToken round-trip", () => {
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080" });
