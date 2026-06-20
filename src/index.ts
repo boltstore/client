@@ -39,6 +39,8 @@ export type {
   SortSpec,
   PaginationMeta,
   RecordEvent,
+  AggregateSpec,
+  AggregateFn,
 } from "@boltstore/utils";
 
 export { MemoryStore, IndexedDbStore } from "./store";

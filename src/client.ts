@@ -1,6 +1,7 @@
 import type {
   ApiResponse,
   ListOptions,
+  QueryOptions,
 } from "@boltstore/utils";
 
 import { BoltstoreError } from "./errors";
@@ -120,6 +121,32 @@ export class BoltstoreClient {
       id: op.id,
       data: op.data,
     }))).catch(() => {});
+  }
+
+  /**
+   * Execute a query against the server's POST /query endpoint.
+   * Supports the full Filter DSL, aggregates, groupBy, having, search, sort, limit, offset.
+   * Falls back to local store when offline if sync is enabled.
+   */
+  async query(options: QueryOptions): Promise<{ data: Record<string, unknown>[]; meta: Record<string, unknown> }> {
+    const isUserCol = !options.collection.startsWith("_");
+    try {
+      const res = await this.request<Record<string, unknown>[]>("POST", this.dbPath("/query"), options);
+      const result = { data: res.data ?? [], meta: res.meta ?? {} };
+      if (this.localStore && isUserCol && result.data.length > 0) {
+        await this.localStore.insert(options.collection, result.data).catch(() => {});
+      }
+      return result;
+    } catch (err) {
+      if (this.localStore && isUserCol) {
+        const cached = await this.localStore.query(options);
+        return cached as unknown as { data: Record<string, unknown>[]; meta: Record<string, unknown> };
+      }
+      if (err instanceof BoltstoreError && err.code === "NOT_FOUND") {
+        return { data: [], meta: {} };
+      }
+      throw err;
+    }
   }
 
   collection<Fields = Record<string, unknown>>(name: string): TypedCollection<Fields> {
