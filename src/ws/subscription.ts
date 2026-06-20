@@ -39,6 +39,8 @@ export class SubscriptionManager {
   private send: (msg: Record<string, unknown>) => void;
   private pendingCleanupTimer: ReturnType<typeof setInterval> | null = null;
   private connected = false;
+  /** Highest seq seen from _changes, used for replay on reconnect. */
+  private lastSeq = 0;
 
   constructor(
     send: (msg: Record<string, unknown>) => void,
@@ -182,6 +184,9 @@ export class SubscriptionManager {
   }
 
   private handleEvent(event: RecordEvent): void {
+    if (event.seq != null && event.seq > this.lastSeq) {
+      this.lastSeq = event.seq;
+    }
     for (const sub of this.active.values()) {
       if (sub.collection && sub.collection !== event.collection) continue;
       if (sub.recordId && sub.recordId !== (event.record.id as string)) continue;
@@ -217,6 +222,7 @@ export class SubscriptionManager {
       const msg: Record<string, unknown> = { type: "subscribe", collection: sub.collection, localId };
       if (sub.recordId) msg.recordId = sub.recordId;
       if (sub.filter) msg.filter = sub.filter;
+      if (this.lastSeq > 0) msg.lastSeq = this.lastSeq;
       this.send(msg);
     }
   }

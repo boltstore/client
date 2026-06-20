@@ -93,7 +93,7 @@ interface QueuedOperation {
   error?: string;
 }
 
-const DEFAULT_INTERVAL_MS = 30_000;
+const DEFAULT_INTERVAL_MS = 0;
 const QUEUE_KEY = "sync_queue";
 
 export class SyncManager {
@@ -129,7 +129,7 @@ export class SyncManager {
       onQueueError: config?.onQueueError ?? (() => {}),
       maxQueueRetries: config?.maxQueueRetries ?? 3,
     };
-    this.pollTimeoutMs = Math.max(this.config.intervalMs, 5000);
+    this.pollTimeoutMs = this.config.intervalMs > 0 ? Math.max(this.config.intervalMs, 5000) : 0;
   }
 
   get lastCursor(): number | null {
@@ -158,9 +158,9 @@ export class SyncManager {
 
   async start(config?: { collections?: string[]; intervalMs?: number }): Promise<void> {
     if (config?.collections) this.config.collections = config.collections;
-    if (config?.intervalMs) {
+    if (config?.intervalMs !== undefined) {
       this.config.intervalMs = config.intervalMs;
-      this.pollTimeoutMs = Math.max(config.intervalMs, 5000);
+      this.pollTimeoutMs = config.intervalMs > 0 ? Math.max(config.intervalMs, 5000) : 0;
     }
 
     this.running = true;
@@ -179,7 +179,9 @@ export class SyncManager {
       // First sync — no prior state
     }
 
-    this.scheduleNextPull();
+    if (this.pollTimeoutMs > 0) {
+      this.scheduleNextPull();
+    }
   }
 
   stop(): void {
@@ -291,14 +293,18 @@ export class SyncManager {
       await this.persistQueue();
 
       const toRetry: QueuedOperation[] = [];
+      const allResults: SyncPushOperationResult[] = [];
 
       for (const item of pending) {
         try {
-          await this.client.request<SyncPushResult>("POST", this.client.dbPath("/sync/push"), {
+          const res = await this.client.request<SyncPushResult>("POST", this.client.dbPath("/sync/push"), {
             operations: [item.operation],
             clientId: this.config.clientId,
           });
           this.setOnline(true);
+          if (res.data) {
+            allResults.push(...res.data.results);
+          }
         } catch (err) {
           const isNetwork = err instanceof BoltstoreError && err.code === "NETWORK_ERROR";
           if (isNetwork) {
@@ -313,6 +319,10 @@ export class SyncManager {
             );
           }
         }
+      }
+
+      if (allResults.length > 0) {
+        this.config.onPush({ ok: true, results: allResults });
       }
 
       if (toRetry.length > 0) {
@@ -409,7 +419,7 @@ export class SyncManager {
   }
 
   private scheduleNextPull(): void {
-    if (!this.running) return;
+    if (!this.running || this.pollTimeoutMs <= 0) return;
 
     this.pollTimer = setTimeout(async () => {
       if (!this.running) return;
