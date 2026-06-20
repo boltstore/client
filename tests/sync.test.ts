@@ -168,6 +168,85 @@ describe("SyncManager — push", () => {
     await sync.push([{ event: "create", collection: "items", data: { x: 1 } }]);
     expect(sentUrl).toBe("http://localhost:8080/api/dbs_app/sync/push");
   });
+
+  test("push sends baseVersion when set on operation", async () => {
+    let sentBody: unknown = null;
+    globalThis.fetch = async (_url: string, init: RequestInit) => {
+      sentBody = JSON.parse(init.body as string);
+      return new Response(JSON.stringify({ data: { ok: true, results: [] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
+    const sync = new SyncManager(client);
+    await sync.push([
+      { event: "update", collection: "posts", id: "rec_1", data: { title: "updated" }, baseVersion: "2024-01-01T00:00:00.000Z" },
+    ]);
+    const ops = (sentBody as Record<string, unknown>).operations as unknown[];
+    expect((ops[0] as Record<string, unknown>).baseVersion).toBe("2024-01-01T00:00:00.000Z");
+  });
+
+  test("push returns conflict result and fires onConflict callback for client-merge", async () => {
+    let callCount = 0;
+    globalThis.fetch = async (_url: string, init: RequestInit) => {
+      callCount++;
+      if (callCount === 1) {
+        // First push: return conflict
+        return new Response(JSON.stringify({ data: { ok: false, results: [{ event: "update", collection: "posts", id: "rec_1", status: "conflict", conflict: { serverVersion: { title: "server_val", updated_at: "2024-02-01T00:00:00Z" }, clientVersion: { title: "client_val" }, strategy: "client-merge" } }] } }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      // Second push: merged data was sent
+      return new Response(JSON.stringify({ data: { ok: true, results: [{ event: "update", collection: "posts", id: "rec_1", status: "updated" }] } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
+    let capturedConflict: unknown = null;
+    const sync = new SyncManager(client, {
+      onConflict: async (conflict) => {
+        capturedConflict = conflict;
+        // Merge: take server's title but set our count
+        return { title: conflict.serverVersion.title, myCount: 42 };
+      },
+    });
+    const result = await sync.push([{ event: "update", collection: "posts", id: "rec_1", data: { title: "client_val" } }]);
+
+    expect(callCount).toBe(2);
+    expect(result.results).toHaveLength(2);
+    expect(result.results[1].status).toBe("updated");
+    expect(capturedConflict).toBeTruthy();
+    const conflict = capturedConflict as Record<string, unknown>;
+    expect((conflict.operation as Record<string, unknown>).id).toBe("rec_1");
+    expect((conflict.serverVersion as Record<string, unknown>).title).toBe("server_val");
+  });
+
+  test("push does not retry on conflict for server-wins strategy", async () => {
+    let callCount = 0;
+    globalThis.fetch = async () => {
+      callCount++;
+      return new Response(JSON.stringify({ data: { ok: false, results: [{ event: "update", collection: "posts", id: "rec_1", status: "conflict", conflict: { serverVersion: { title: "server" }, clientVersion: { title: "client" }, strategy: "server-wins" } }] } }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
+    const sync = new SyncManager(client, {
+      onConflict: async () => ({ title: "merged" }),
+    });
+    const result = await sync.push([{ event: "update", collection: "posts", id: "rec_1", data: { title: "client" } }]);
+
+    // Only one call — server-wins conflicts should NOT auto-retry
+    expect(callCount).toBe(1);
+    expect(result.results[0].status).toBe("conflict");
+    expect(result.results[0].conflict?.strategy).toBe("server-wins");
+  });
 });
 
 describe("SyncManager — status", () => {

@@ -1,6 +1,13 @@
 import type { BoltstoreClient } from "../client";
 import { BoltstoreError } from "../errors";
 
+export interface SyncConflict {
+  operation: SyncPushOperation;
+  serverVersion: Record<string, unknown>;
+  clientVersion: Record<string, unknown>;
+  strategy: string;
+}
+
 export interface SyncConfig {
   clientId?: string;
   collections?: string[];
@@ -8,6 +15,7 @@ export interface SyncConfig {
   onPull?: (result: SyncPullResult) => void;
   onPush?: (result: SyncPushResult) => void;
   onError?: (error: Error) => void;
+  onConflict?: (conflict: SyncConflict) => Promise<Record<string, unknown> | undefined | void>;
 }
 
 export interface SyncStatus {
@@ -46,6 +54,7 @@ export interface SyncPushOperation {
   collection: string;
   id?: string;
   data?: Record<string, unknown>;
+  baseVersion?: string;
 }
 
 export interface SyncPushOperationResult {
@@ -54,6 +63,11 @@ export interface SyncPushOperationResult {
   id: string | null;
   status: string;
   error?: string;
+  conflict?: {
+    serverVersion: Record<string, unknown>;
+    clientVersion: Record<string, unknown>;
+    strategy: string;
+  };
 }
 
 const DEFAULT_INTERVAL_MS = 30_000;
@@ -77,6 +91,7 @@ export class SyncManager {
       onPull: config?.onPull ?? (() => {}),
       onPush: config?.onPush ?? (() => {}),
       onError: config?.onError ?? (() => {}),
+      onConflict: config?.onConflict ?? (async () => {}),
     };
     this.pollTimeoutMs = Math.max(this.config.intervalMs, 5000);
   }
@@ -157,6 +172,44 @@ export class SyncManager {
     this._lastPushAt = new Date().toISOString();
 
     if (res.data) {
+      const conflicts = res.data.results.filter((r) => r.status === "conflict" && r.conflict);
+      const rePushOps: SyncPushOperation[] = [];
+
+      for (const result of conflicts) {
+        if (!result.conflict) continue;
+        const originalOp = operations.find((o) => o.id === result.id && o.collection === result.collection);
+        if (!originalOp) continue;
+
+        const conflict: SyncConflict = {
+          operation: originalOp,
+          serverVersion: result.conflict.serverVersion,
+          clientVersion: result.conflict.clientVersion,
+          strategy: result.conflict.strategy,
+        };
+
+        const merged = await this.config.onConflict(conflict);
+        if (merged && result.conflict.strategy === "client-merge" && originalOp.event === "update") {
+          rePushOps.push({
+            event: "update",
+            collection: originalOp.collection,
+            id: originalOp.id,
+            data: merged,
+            baseVersion: result.conflict.serverVersion.updated_at as string | undefined,
+          });
+        }
+      }
+
+      if (rePushOps.length > 0) {
+        const retryRes = await this.client.request<SyncPushResult>("POST", this.client.dbPath("/sync/push"), {
+          operations: rePushOps,
+          clientId: this.config.clientId,
+        });
+        if (retryRes.data) {
+          this._lastPushAt = new Date().toISOString();
+          res.data.results = [...res.data.results, ...retryRes.data.results];
+        }
+      }
+
       this.config.onPush(res.data);
     }
 

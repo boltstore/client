@@ -58,4 +58,5 @@ export type {
   SyncChange,
   SyncPushOperation,
   SyncPushOperationResult,
+  SyncConflict,
 } from "./sync";
