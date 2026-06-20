@@ -54,58 +54,67 @@ export class BoltstoreClient {
   private token: string | undefined;
   private refreshToken: string | undefined;
   private colRegistry = new Map<string, TypedCollectionImpl<unknown>>();
-  private subManager: SubscriptionManager;
-  private syncMgr: SyncManager;
+  private subManager: SubscriptionManager | null = null;
+  private syncMgr: SyncManager | null = null;
+  private realtimeEnabled: boolean;
+  private syncEnabled: boolean;
 
   auth: ReturnType<typeof createAuthApi>;
   health: ReturnType<typeof createHealthApi>;
   collections: ReturnType<typeof createCollectionsApi>;
-  localStore: LocalStore;
+  localStore: LocalStore | null;
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
     this.databaseId = config.databaseId;
     this.token = config.token;
     this.refreshToken = config.refreshToken;
-    this.localStore = config.localStore ?? detectLocalStore();
+    this.realtimeEnabled = config.enableRealtime ?? false;
+    this.syncEnabled = config.enableSync ?? false;
+
+    if (this.syncEnabled) {
+      this.localStore = config.localStore ?? detectLocalStore();
+      this.syncMgr = new SyncManager(this);
+      this.syncMgr.localStore = this.localStore;
+    } else {
+      this.localStore = null;
+    }
 
     this.auth = createAuthApi(this);
     this.health = createHealthApi(this);
     this.collections = createCollectionsApi(this);
 
-    // Internal sync manager for offline queue
-    this.syncMgr = new SyncManager(this);
-    this.syncMgr.localStore = this.localStore;
-
-    // Internal WebSocket connection for realtime sync
-    const wsConn = new RealtimeConnection(
-      this.baseUrl,
-      () => this.token,
-      { databaseId: this.databaseId },
-    );
-    this.subManager = new SubscriptionManager(
-      (msg) => wsConn.send(msg),
-      (handler) => wsConn.onMessage(handler),
-      (handler) => wsConn.onStateChange(handler),
-    );
-    this.subManager.setLocalStore(this.localStore);
-
-    // Wire online/offline to sync queue
-    wsConn.onStateChange((state) => {
-      if (state === "connected") {
-        this.syncMgr.setOnline(true);
-        this.syncMgr.listenForOnline();
-      } else if (state === "disconnected" || state === "reconnecting") {
-        this.syncMgr.setOnline(false);
+    if (this.realtimeEnabled) {
+      const wsConn = new RealtimeConnection(
+        this.baseUrl,
+        () => this.token,
+        { databaseId: this.databaseId },
+      );
+      this.subManager = new SubscriptionManager(
+        (msg) => wsConn.send(msg),
+        (handler) => wsConn.onMessage(handler),
+        (handler) => wsConn.onStateChange(handler),
+      );
+      if (this.localStore) {
+        this.subManager.setLocalStore(this.localStore);
       }
-    });
-
-    wsConn.connect();
+      if (this.syncMgr) {
+        wsConn.onStateChange((state) => {
+          if (state === "connected") {
+            this.syncMgr!.setOnline(true);
+            this.syncMgr!.listenForOnline();
+          } else if (state === "disconnected" || state === "reconnecting") {
+            this.syncMgr!.setOnline(false);
+          }
+        });
+      }
+      wsConn.connect();
+    }
   }
 
   /** Enqueue operations for offline sync. Called by TypedCollectionImpl on network errors. */
   enqueueSync(ops: Array<{ event: "create" | "update" | "delete"; collection: string; id?: string; data?: Record<string, unknown> }>): void {
-    this.syncMgr.push(ops.map((op) => ({
+    this.syncMgr?.push(ops.map((op) => ({
       event: op.event,
       collection: op.collection,
       id: op.id,
@@ -116,7 +125,7 @@ export class BoltstoreClient {
   collection<Fields = Record<string, unknown>>(name: string): TypedCollection<Fields> {
     let col = this.colRegistry.get(name) as TypedCollectionImpl<Fields> | undefined;
     if (!col) {
-      col = new TypedCollectionImpl<Fields>(this, name, (path: string) => this.dbPath(path), this.subManager);
+      col = new TypedCollectionImpl<Fields>(this, name, (path: string) => this.dbPath(path), this.subManager ?? undefined);
       this.colRegistry.set(name, col as TypedCollectionImpl<unknown>);
     }
     return col;

@@ -25,8 +25,12 @@ export interface ClientConfig {
   databaseId: string;
   token?: string;
   refreshToken?: string;
-  /** Optional local store for offline query support and caching. Defaults to IndexedDbStore in browser. */
+  /** Optional local store for offline query support and caching. Defaults to IndexedDbStore in browser when sync is enabled. */
   localStore?: LocalStore;
+  /** Enable realtime WebSocket subscriptions. Default: false. */
+  enableRealtime?: boolean;
+  /** Enable offline sync with local cache. Default: false. */
+  enableSync?: boolean;
 }
 
 export interface HealthCheck {

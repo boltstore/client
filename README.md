@@ -1,6 +1,8 @@
 # @boltstore/client
 
-Browser-first JavaScript/TypeScript SDK for Boltstore with automatic offline sync and realtime subscriptions.
+Browser-first JavaScript/TypeScript SDK for Boltstore.
+
+**Note:** Realtime subscriptions and offline sync are opt-in features that must be explicitly enabled. See [Feature Flags](#client) below.
 
 ## Installation
 
@@ -25,17 +27,9 @@ const collections = await client.collections.list();
 const posts = client.collection("posts");
 
 const record = await posts.create({ title: "Hello World" });
-
 const updated = await posts.update(record.id, { title: "Updated" });
-
 await posts.delete(record.id);
-
 const list = await posts.list({ sort: "created_at", direction: "desc" });
-
-// Live subscriptions — auto-connected WebSocket
-const unsubscribe = posts.subscribe((event) => {
-  console.log(event.event, event.record); // "create" | "update" | "delete"
-});
 
 // Auth
 const { accessToken, refreshToken } = await client.auth.login("user@example.com", "secret");
@@ -49,15 +43,35 @@ const { accessToken, refreshToken } = await client.auth.login("user@example.com"
 const client = new BoltstoreClient({
   baseUrl: string;
   databaseId: string;
-  token?: string;           // optional, set after login
-  refreshToken?: string;    // optional
-  localStore?: LocalStore;  // optional, defaults to IndexedDbStore in browser
+  token?: string;            // optional, set after login
+  refreshToken?: string;     // optional
+  localStore?: LocalStore;   // optional, only used when enableSync is true
+  enableRealtime?: boolean;  // default: false — ⚠️ unstable
+  enableSync?: boolean;      // default: false — ⚠️ unstable
 });
 
 client.setToken(token: string | undefined): void;
 client.getToken(): string | undefined;
 client.setRefreshToken(token: string | undefined): void;
 client.getRefreshToken(): string | undefined;
+```
+
+> **⚠️ Unstable:** Realtime and sync features are experimental. They work for basic use cases but may have edge cases with reconnection, conflict resolution, and token expiry during extended offline periods. Enable at your own risk.
+
+**Feature flags:**
+
+| Flag | Default | When disabled | When enabled |
+|---|---|---|---|
+| `enableRealtime` | `false` | No WebSocket, `subscribe()` returns no-op | WebSocket subscriptions for live updates |
+| `enableSync` | `false` | Direct HTTP only, no local cache | IndexedDB offline cache with auto-sync |
+
+**MVP usage (no realtime, no sync):**
+```typescript
+const client = new BoltstoreClient({ baseUrl, databaseId });
+// All operations go directly to the server via HTTP.
+// No WebSocket, no IndexedDB, no offline fallback.
+const todo = await client.collection("todos").create({ title: "Hello" });
+const list = await client.collection("todos").list();
 ```
 
 ### Collections (schema, read-only)
@@ -81,7 +95,7 @@ col.count(filter?): Promise<number>;
 col.distinct(field): Promise<unknown[]>;
 col.batch(operations): Promise<BatchResult>;
 col.paginate(options): Promise<PaginatedResult<TypedRecord<Fields>>>;
-col.subscribe(callback): () => void;  // live changes, returns unsubscribe
+col.subscribe(callback): () => void;  // requires enableRealtime, no-op otherwise
 ```
 
 ### Filtering, sorting, pagination
@@ -107,7 +121,7 @@ col.list({
 col.paginate({ page: 1, perPage: 20, sort: "created_at", direction: "desc" });
 ```
 
-### Live subscriptions
+### Live subscriptions (requires `enableRealtime: true`)
 
 ```typescript
 // Subscribe to all changes on a collection
@@ -127,22 +141,23 @@ unsub();
 client.health.check(): Promise<HealthCheck>;
 ```
 
-### Offline behavior
+### Offline behavior (requires `enableSync: true`)
 
-Offline support is built-in and automatic. When the browser is offline:
+When both `enableSync: true` is set on the client and `enableSync: true` is set on the server, the SDK caches data in IndexedDB and syncs changes when the connection is restored.
 
+```typescript
+const client = new BoltstoreClient({
+  baseUrl, databaseId,
+  enableSync: true,     // ⚠️ unstable
+  enableRealtime: true, // ⚠️ unstable — required for push notification of remote changes
+});
+```
+
+Offline behavior:
 - **Writes** are stored locally in IndexedDB and queued for sync
 - **Reads** return cached data from IndexedDB with the same query API
 - **Filters, sorting, and search** work offline using the client-side filter engine
-- **Reconnection** is automatic — queued writes are flushed and missed changes are replayed via WebSocket
-
-The local cache is enabled by default (`IndexedDbStore` in browsers). No configuration needed.
-
-```typescript
-// Everything works the same online and offline:
-await col.create({ title: "Offline?" });  // writes locally, syncs later
-const items = await col.list();            // reads from cache if offline
-```
+- **Reconnection** is automatic — queued writes are flushed and remote changes are replayed via WebSocket
 
 ## Development
 
