@@ -67,16 +67,19 @@ export class RealtimeConnection {
     this.setState("connecting");
 
     const params = new URLSearchParams();
-    const token = this.getToken();
-    if (token) params.set("token", token);
     if (this.databaseId) params.set("db", this.databaseId);
 
-    const wsUrl = `${this.url}/ws?${params.toString()}`;
+    const wsUrl = `${this.url}/ws${params.toString() ? "?" + params.toString() : ""}`;
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
       this.setState("connected");
+      // Send auth token as first message (not in URL query string)
+      const token = this.getToken();
+      if (token) {
+        this.ws!.send(JSON.stringify({ type: "auth", token }));
+      }
       this.startHeartbeat();
       this.flushPending();
     };

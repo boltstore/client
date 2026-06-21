@@ -97,12 +97,22 @@ describe("RealtimeConnection", () => {
     conn.disconnect();
   });
 
-  test("connect creates WebSocket with token and database query params", () => {
+  test("connect creates WebSocket with database query param, token sent as first message", () => {
     conn.connect();
     const ws = MockWebSocket._last();
     expect(ws).toBeDefined();
-    expect(ws!.url).toContain("token=test-token");
+    expect(ws!.url).not.toContain("token=");
     expect(ws!.url).toContain("db=dbs_abc");
+  });
+
+  test("token sent as first message after open", () => {
+    conn.connect();
+    const ws = MockWebSocket._last()!;
+    ws._simulateOpen();
+    expect(ws.sentMessages.length).toBeGreaterThanOrEqual(1);
+    const firstMsg = JSON.parse(ws.sentMessages[0]);
+    expect(firstMsg.type).toBe("auth");
+    expect(firstMsg.token).toBe("test-token");
   });
 
   test("connect sets state to connecting then connected on open", () => {
@@ -160,9 +170,13 @@ describe("RealtimeConnection", () => {
     const ws = MockWebSocket._last()!;
     ws._simulateOpen();
 
+    // First message is the auth message (sent by onopen handler)
+    expect(ws!.sentMessages.length).toBeGreaterThanOrEqual(1);
+
     conn.send({ type: "subscribe", collection: "posts" });
-    expect(ws!.sentMessages).toHaveLength(1);
-    const parsed = JSON.parse(ws!.sentMessages[0]);
+    // Now there should be at least 2 messages (auth + subscribe)
+    const lastMsg = ws!.sentMessages[ws!.sentMessages.length - 1];
+    const parsed = JSON.parse(lastMsg);
     expect(parsed.type).toBe("subscribe");
     expect(parsed.collection).toBe("posts");
   });
