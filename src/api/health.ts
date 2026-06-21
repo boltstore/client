@@ -5,7 +5,7 @@ export function createHealthApi(client: BoltstoreClient) {
   return {
     check: async (): Promise<HealthCheck> => {
       const res = await client.request<HealthCheck>("GET", "/api/health");
-      return res.data ?? { status: "unknown", version: "", uptime: 0, timestamp: "" };
+      return res.data!;
     },
   };
 }
