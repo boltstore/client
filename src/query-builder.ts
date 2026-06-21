@@ -1,6 +1,5 @@
 import { QueryBuilder } from "@boltstore/utils";
-import type { QueryOptions, AggregateSpec, PaginationMeta } from "@boltstore/utils";
-import { BoltstoreError } from "./errors";
+import type { QueryOptions, PaginationMeta } from "@boltstore/utils";
 import type { LocalStore } from "./store/types";
 
 export interface PaginatedResult<T> {

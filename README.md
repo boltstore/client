@@ -2,7 +2,7 @@
 
 Browser-first JavaScript/TypeScript SDK for Boltstore.
 
-**Note:** Realtime subscriptions and offline sync are opt-in features that must be explicitly enabled. See [Feature Flags](#client) below.
+**Note:** Realtime subscriptions and offline sync are opt-in features that must be explicitly enabled.
 
 ## Installation
 
@@ -29,7 +29,31 @@ const posts = client.collection("posts");
 const record = await posts.create({ title: "Hello World" });
 const updated = await posts.update(record.id, { title: "Updated" });
 await posts.delete(record.id);
-const list = await posts.list({ sort: "created_at", direction: "desc" });
+
+// Query builder (replaces list/get/count/paginate — one API)
+const results = await posts
+  .createQuery()
+  .where("status", "published")
+  .whereGte("views", 100)
+  .orderBy("created_at", "desc")
+  .limit(10)
+  .get();
+
+const first = await posts
+  .createQuery()
+  .where("slug", "hello-world")
+  .first();
+
+const total = await posts
+  .createQuery()
+  .where("author_id", userId)
+  .count();
+
+const page = await posts
+  .createQuery()
+  .where("category", "tech")
+  .orderBy("created_at", "desc")
+  .paginate(1, 20);
 
 // Auth
 const { accessToken, refreshToken } = await client.auth.login("user@example.com", "secret");
@@ -71,7 +95,7 @@ const client = new BoltstoreClient({ baseUrl, databaseId });
 // All operations go directly to the server via HTTP.
 // No WebSocket, no IndexedDB, no offline fallback.
 const todo = await client.collection("todos").create({ title: "Hello" });
-const list = await client.collection("todos").list();
+const list = await client.collection("todos").createQuery().get();
 ```
 
 ### Collections (schema, read-only)
@@ -87,38 +111,68 @@ client.collections.get(name: string): Promise<CollectionInfo>
 const col = client.collection<Fields>("collection_name");
 
 col.create(data): Promise<TypedRecord<Fields>>;
-col.list(options?: ListOptions & QueryOptions): Promise<TypedRecord<Fields>[]>;
-col.get(id: string): Promise<TypedRecord<Fields>>;
 col.update(id: string, data: Partial<Fields>): Promise<TypedRecord<Fields>>;
 col.delete(id: string): Promise<void>;
-col.count(filter?): Promise<number>;
-col.distinct(field): Promise<unknown[]>;
 col.batch(operations): Promise<BatchResult>;
-col.paginate(options): Promise<PaginatedResult<TypedRecord<Fields>>>;
 col.subscribe(callback): () => void;  // requires enableRealtime, no-op otherwise
+col.createQuery(): ClientQueryBuilder<Fields>;  // replaces list/get/count/paginate
 ```
 
-### Filtering, sorting, pagination
+### Query builder (replaces `list`, `get`, `count`, `distinct`, `paginate`)
+
+All read operations use the same builder:
 
 ```typescript
-// Simple filter (GET /records with URL params)
-col.list({ filter: { status: "active" }, sort: "created_at", direction: "desc", limit: 10 });
+// Filtering
+col.createQuery()
+  .where("status", "active")            // shorthand equality
+  .where("views", "gt", 100)            // explicit operator
+  .whereGte("priority", 5)              // typed method
+  .whereIn("category", ["a", "b"])
+  .whereNull("deleted_at")
+  .where((q) => q.where("x", 1).orWhere("y", 2))  // nested groups
+  .get();
 
-// Complex filter DSL (POST /query)
-col.list({
-  filter: {
-    status: { $in: ["active", "pending"] },
-    priority: { $gte: 5 },
-    $or: [{ assignee: userId }, { is_public: true }],
-  },
-  search: "keyword",
-  searchFields: ["title", "body"],
-  fields: ["id", "title"],
-  expand: ["author"],
-});
+// Sorting
+col.createQuery()
+  .orderBy("created_at", "desc")
+  .orderBy("name")                      // defaults to asc
+  .get();
 
-// Pagination
-col.paginate({ page: 1, perPage: 20, sort: "created_at", direction: "desc" });
+// Projection
+col.createQuery()
+  .select("id", "title", "author.name") // JSON path support
+  .get();
+
+// Search
+col.createQuery()
+  .search("keyword", ["title", "body"])
+  .get();
+
+// Aggregation
+col.createQuery()
+  .where("category", "tech")
+  .aggregate({ function: "$count", alias: "total" })
+  .get();
+
+// Group by with having
+col.createQuery()
+  .aggregate({ function: "$count", alias: "cnt" })
+  .groupBy("category")
+  .having("cnt", "gt", 1)
+  .get();
+
+// Convenience methods
+col.createQuery().where("id", recordId).first();    // single record or null
+col.createQuery().where("author", userId).count();  // count total
+col.createQuery().paginate(1, 20);                  // { data, meta: { page, per_page, total, total_pages } }
+
+// Cross-collection queries
+client.createQuery()
+  .from("posts")
+  .join("authors", [{ left: "posts.author_id", operator: "=", right: "authors.id" }])
+  .where("authors.role", "admin")
+  .get();
 ```
 
 ### Live subscriptions (requires `enableRealtime: true`)
