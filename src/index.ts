@@ -20,7 +20,7 @@ export {
 } from "./client";
 
 export { ClientQueryBuilder } from "./query-builder";
-export type { PaginatedResult } from "./query-builder";
+export type { PaginatedResult, SelectResult, JoinResult } from "./query-builder";
 
 export type {
   ApiResponse,
@@ -34,7 +34,8 @@ export type {
   RecordEvent,
 } from "@boltstore/utils";
 
-export { QueryBuilder } from "@boltstore/utils";
+export { QueryBuilder, sql } from "@boltstore/utils";
+export type { SqlExpr } from "@boltstore/utils";
 
 export { MemoryStore, IndexedDbStore } from "./store";
 export type { LocalStore } from "./store/types";

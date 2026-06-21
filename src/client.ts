@@ -131,6 +131,18 @@ export class BoltstoreClient {
     return new ClientQueryBuilder<Fields>(sendQuery, this.localStore);
   }
 
+  /** Execute a parameterized read-only SQL query. Returns typed results. */
+  async querySql<T = Record<string, unknown>>(sql: string, params?: unknown[], collection?: string): Promise<T[]> {
+    const res = await this.request<T[]>("POST", this.dbPath("/query/sql"), { sql, params, collection });
+    return res.data ?? [];
+  }
+
+  /** Execute operations atomically in a server-side transaction. */
+  async transaction<T>(operations: import("@boltstore/utils").BatchOperation[]): Promise<import("@boltstore/utils").BatchResult> {
+    const res = await this.request<import("@boltstore/utils").BatchResult>("POST", `/api/admin/${this.databaseId}/transactions`, { operations });
+    return res.data!;
+  }
+
   collection<Fields = Record<string, unknown>>(name: string): TypedCollection<Fields> {
     let col = this.colRegistry.get(name) as TypedCollectionImpl<Fields> | undefined;
     if (!col) {
