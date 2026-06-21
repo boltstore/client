@@ -1,6 +1,6 @@
 {
   "name": "@boltstore/client",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "private": false,
   "type": "module",
   "description": "Boltstore client SDK — JavaScript/TypeScript SDK for Boltstore",
@@ -16,7 +16,7 @@
     "prepublish": "bun run build"
   },
   "dependencies": {
-    "@boltstore/utils": "^0.7.5"
+    "@boltstore/utils": "^0.7.6"
   },
   "devDependencies": {
     "typescript": "^6.0.3"
