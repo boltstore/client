@@ -1,5 +1,6 @@
-import type { PaginationMeta, ListOptions, BatchResult, BoltstoreRecord, RecordEvent } from "@boltstore/utils";
+import type { BatchResult, BoltstoreRecord, RecordEvent } from "@boltstore/utils";
 import type { LocalStore } from "./store/types";
+import type { ClientQueryBuilder } from "./query-builder";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -21,15 +22,11 @@ export type OAuthProvider = "google" | "github";
 
 export interface ClientConfig {
   baseUrl: string;
-  /** Database ID (dbs_ prefix). Required for all database-scoped operations. */
   databaseId: string;
   token?: string;
   refreshToken?: string;
-  /** Optional local store for offline query support and caching. Defaults to IndexedDbStore in browser when sync is enabled. */
   localStore?: LocalStore;
-  /** Enable realtime WebSocket subscriptions. Default: false. */
   enableRealtime?: boolean;
-  /** Enable offline sync with local cache. Default: false. */
   enableSync?: boolean;
 }
 
@@ -38,35 +35,18 @@ export interface HealthCheck {
   version: string;
   uptime: number;
   timestamp: string;
-  databases?: Array<{ id?: string; name: string; path?: string; created_at: string }>;
+  databases?: Array<{ id?: string; name: string; path: string; created_at: string }>;
   database_list?: string[];
-}
-
-export interface PaginatedResult<T> {
-  data: T[];
-  meta: PaginationMeta;
 }
 
 export type TypedRecord<Fields> = Fields & BoltstoreRecord;
 
-export interface PaginateOptions {
-  page: number;
-  perPage?: number;
-  sort?: string;
-  direction?: "asc" | "desc";
-  filter?: Record<string, unknown>;
-}
-
 export interface TypedCollection<Fields> {
   create(data: Omit<Fields, "id" | "created_at" | "updated_at">): Promise<TypedRecord<Fields>>;
-  list(options?: ListOptions): Promise<TypedRecord<Fields>[]>;
-  get(id: string): Promise<TypedRecord<Fields>>;
   update(id: string, data: Partial<Omit<Fields, "id" | "created_at" | "updated_at">>): Promise<TypedRecord<Fields>>;
   delete(id: string): Promise<void>;
-  count(filter?: Partial<Fields & Record<string, unknown>>): Promise<number>;
-  distinct(field: keyof Fields & string): Promise<unknown[]>;
   batch(operations: TypedBatchOperation<Fields>[]): Promise<BatchResult>;
-  paginate(options: PaginateOptions): Promise<PaginatedResult<TypedRecord<Fields>>>;
+  createQuery(): ClientQueryBuilder<TypedRecord<Fields>>;
   subscribe(callback: (event: RecordEvent) => void): () => void;
 }
 

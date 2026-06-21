@@ -1,6 +1,5 @@
 import type {
   ApiResponse,
-  ListOptions,
   QueryOptions,
 } from "@boltstore/utils";
 
@@ -14,11 +13,11 @@ import type {
   OAuthProvider,
   ClientConfig,
   HealthCheck,
-  PaginatedResult,
   TypedRecord,
   TypedBatchOperation,
-  PaginateOptions,
 } from "./types";
+import type { QueryResponse } from "./query-builder";
+import { ClientQueryBuilder } from "./query-builder";
 import { createAuthApi } from "./api/auth";
 import { createHealthApi } from "./api/health";
 import { createCollectionsApi } from "./api/collections";
@@ -36,8 +35,6 @@ export type {
   OAuthProvider,
   ClientConfig,
   HealthCheck,
-  PaginatedResult,
-  PaginateOptions,
   TypedRecord,
   TypedBatchOperation,
 };
@@ -123,30 +120,15 @@ export class BoltstoreClient {
     }))).catch(() => {});
   }
 
-  /**
-   * Execute a query against the server's POST /query endpoint.
-   * Supports the full Filter DSL, aggregates, groupBy, having, search, sort, limit, offset.
-   * Falls back to local store when offline if sync is enabled.
-   */
-  async query(options: QueryOptions): Promise<{ data: Record<string, unknown>[]; meta: Record<string, unknown> }> {
-    const isUserCol = !options.collection.startsWith("_");
-    try {
-      const res = await this.request<Record<string, unknown>[]>("POST", this.dbPath("/query"), options);
-      const result = { data: res.data ?? [], meta: res.meta ?? {} };
-      if (this.localStore && isUserCol && result.data.length > 0) {
-        await this.localStore.insert(options.collection, result.data).catch(() => {});
+  createQuery<Fields = Record<string, unknown>>(): ClientQueryBuilder<Fields> {
+    const sendQuery = async (params: QueryOptions): Promise<QueryResponse<Fields>> => {
+      const res = await this.request<Fields[]>("POST", this.dbPath("/query"), params);
+      if (this.localStore && !params.collection.startsWith("_") && res.data && res.data.length > 0) {
+        await this.localStore.insert(params.collection, res.data as unknown as Record<string, unknown>[]).catch(() => {});
       }
-      return result;
-    } catch (err) {
-      if (this.localStore && isUserCol) {
-        const cached = await this.localStore.query(options);
-        return cached as unknown as { data: Record<string, unknown>[]; meta: Record<string, unknown> };
-      }
-      if (err instanceof BoltstoreError && err.code === "NOT_FOUND") {
-        return { data: [], meta: {} };
-      }
-      throw err;
-    }
+      return { data: res.data ?? [], meta: res.meta ?? {} };
+    };
+    return new ClientQueryBuilder<Fields>(sendQuery, this.localStore);
   }
 
   collection<Fields = Record<string, unknown>>(name: string): TypedCollection<Fields> {
@@ -242,28 +224,5 @@ export class BoltstoreClient {
 
   dbPath(path: string): string {
     return `/api/${this.databaseId}${path}`;
-  }
-
-  buildListPath(collection: string, options?: ListOptions): string {
-    const params = new URLSearchParams();
-    if (options?.sort) params.set("sort", options.sort);
-    if (options?.direction) params.set("direction", options.direction);
-    if (options?.limit !== undefined) params.set("limit", String(options.limit));
-    if (options?.offset !== undefined) params.set("offset", String(options.offset));
-    if (options?.page !== undefined) params.set("page", String(options.page));
-    if (options?.perPage !== undefined) params.set("per_page", String(options.perPage));
-    if (options?.fields) params.set("fields", options.fields.join(","));
-    if (options?.expand) params.set("expand", options.expand.join(","));
-    if (options?.search) params.set("search", options.search);
-    if (options?.searchFields) params.set("search_fields", options.searchFields.join(","));
-    if (options?.filter) {
-      for (const [k, v] of Object.entries(options.filter)) {
-        if (v === null || v === undefined) continue;
-        if (typeof v === "object" && !Array.isArray(v)) continue;
-        params.set(k, Array.isArray(v) ? v.join(",") : String(v));
-      }
-    }
-    const qs = params.toString();
-    return this.dbPath(`/collections/${collection}/records`) + (qs ? `?${qs}` : "");
   }
 }

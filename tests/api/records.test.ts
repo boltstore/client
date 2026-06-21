@@ -25,34 +25,20 @@ describe("TypedCollection — CRUD via client.collection()", () => {
     expect(record.id).toBe("rec_1");
   });
 
-  test("list returns array", async () => {
-    mockFetch({ body: { data: [{ id: "rec_1", title: "A" }, { id: "rec_2", title: "B" }] } });
+  test("createQuery().where().get() returns filtered records", async () => {
+    mockFetch({ body: { data: [{ id: "rec_1", title: "A" }] } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const records = await client.collection("items").list();
-    expect(records).toHaveLength(2);
+    const records = await client.collection("items").createQuery().where("title", "A").get();
+    expect(records).toHaveLength(1);
+    expect(records[0].title).toBe("A");
   });
 
-  test("list passes options through buildListPath", async () => {
-    let capturedUrl = "";
-    globalThis.fetch = async (url: string) => {
-      capturedUrl = url as string;
-      return new Response(JSON.stringify({ data: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    };
+  test("createQuery().where().first() returns first match", async () => {
+    mockFetch({ body: { data: [{ id: "rec_1", title: "Test" }] } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    await client.collection("items").list({ sort: "name", limit: 5 });
-    expect(capturedUrl).toContain("sort=name");
-    expect(capturedUrl).toContain("limit=5");
-  });
-
-  test("get returns single record", async () => {
-    mockFetch({ body: { data: { id: "rec_1", title: "Test", created_at: "now", updated_at: "now" } } });
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const record = await client.collection("items").get("rec_1");
-    expect(record.id).toBe("rec_1");
-    expect(record.title).toBe("Test");
+    const record = await client.collection("items").createQuery().where("id", "rec_1").first();
+    expect(record).not.toBeNull();
+    expect(record!.id).toBe("rec_1");
   });
 
   test("update sends PATCH with data", async () => {
@@ -68,18 +54,11 @@ describe("TypedCollection — CRUD via client.collection()", () => {
     await client.collection("items").delete("rec_1");
   });
 
-  test("count returns number", async () => {
-    mockFetch({ body: { data: { count: 42 } } });
+  test("createQuery().count() returns number", async () => {
+    mockFetch({ body: { data: [{ count: 42 }] } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const count = await client.collection("items").count();
+    const count = await client.collection("items").createQuery().count();
     expect(count).toBe(42);
-  });
-
-  test("distinct returns values", async () => {
-    mockFetch({ body: { data: { field: "status", values: ["active", "inactive"] } } });
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const values = await client.collection("items").distinct("status");
-    expect(values).toEqual(["active", "inactive"]);
   });
 
   test("batch returns BatchResult", async () => {
@@ -92,12 +71,13 @@ describe("TypedCollection — CRUD via client.collection()", () => {
     expect(result.created).toBe(2);
   });
 
-  test("paginate returns paginated result", async () => {
-    mockFetch({ body: { data: [{ id: "1" }], meta: { page: 1, per_page: 10, total: 1, total_pages: 1 } } });
+  test("createQuery().paginate() returns paginated result", async () => {
+    mockFetch({ body: { data: [{ id: "1" }], meta: { total: 1 } } });
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const result = await client.collection("items").paginate({ page: 1, perPage: 10 });
+    const result = await client.collection("items").createQuery().paginate(1, 10);
     expect(result.data).toHaveLength(1);
     expect(result.meta.page).toBe(1);
+    expect(result.meta.total).toBe(1);
   });
 
   test("subscribe returns an unsubscribe function", () => {

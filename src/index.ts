@@ -10,16 +10,17 @@ export {
   BoltstoreClient,
   BoltstoreError,
   type ClientConfig,
-  type PaginatedResult,
   type TypedRecord,
   type TypedCollection,
-  type PaginateOptions,
   type TokenPair,
   type UserProfile,
   type OAuthProvider,
   type HealthCheck,
   type TypedBatchOperation,
 } from "./client";
+
+export { ClientQueryBuilder } from "./query-builder";
+export type { PaginatedResult } from "./query-builder";
 
 export type {
   ApiResponse,
@@ -28,20 +29,12 @@ export type {
   BoltstoreRecord,
   ColumnDefinition,
   ColumnType,
-  ListOptions,
   BatchOperation,
   BatchResult,
-  QueryOptions,
-  Filter,
-  FilterCondition,
-  FilterGroup,
-  FilterOperator,
-  SortSpec,
-  PaginationMeta,
   RecordEvent,
-  AggregateSpec,
-  AggregateFn,
 } from "@boltstore/utils";
+
+export { QueryBuilder } from "@boltstore/utils";
 
 export { MemoryStore, IndexedDbStore } from "./store";
 export type { LocalStore } from "./store/types";

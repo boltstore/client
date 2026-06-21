@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { TypedCollectionImpl, type MinimalClient } from "../src/typed-collection";
 import type { ApiResponse } from "../src/typed-collection";
-import { BoltstoreError } from "../src/errors";
+import { ClientQueryBuilder } from "../src/query-builder";
 
 interface Post {
   title: string;
@@ -13,9 +13,7 @@ function createMockClient(overrides?: Partial<MinimalClient>): MinimalClient {
     request: async <T>(_method: string, _path: string, _body?: unknown): Promise<ApiResponse<T>> => {
       return { data: undefined as unknown as T };
     },
-    buildListPath: (_collection: string, _options?: unknown): string => {
-      return `/api/db/collections/${_collection}/records`;
-    },
+    localStore: null,
     ...overrides,
   };
 }
@@ -33,57 +31,39 @@ describe("TypedCollectionImpl", () => {
     expect(record.title).toBe("Hello");
   });
 
-  test("list returns array", async () => {
+  test("createQuery returns a ClientQueryBuilder", () => {
+    const client = createMockClient();
+    const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
+    const qb = col.createQuery();
+    expect(qb).toBeInstanceOf(ClientQueryBuilder);
+  });
+
+  test("createQuery().where().get() returns filtered records", async () => {
     const client = createMockClient({
       request: async () => ({
         data: [
           { id: "rec_1", title: "A", content: "a", created_at: "now", updated_at: "now" },
-          { id: "rec_2", title: "B", content: "b", created_at: "now", updated_at: "now" },
         ],
       }),
     });
     const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    const records = await col.list();
-    expect(records).toHaveLength(2);
+    const records = await col.createQuery().where("title", "A").get();
+    expect(records).toHaveLength(1);
+    expect(records[0].title).toBe("A");
   });
 
-  test("list passes options to buildListPath", async () => {
-    let capturedOptions: unknown = null;
-    const client = createMockClient({
-      buildListPath: (collection, options) => {
-        capturedOptions = options;
-        return `/api/db/collections/${collection}/records`;
-      },
-      request: async () => ({ data: [] }),
-    });
-    const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    await col.list({ sort: "title", limit: 10 });
-    expect(capturedOptions).toEqual({ sort: "title", limit: 10 });
-  });
-
-  test("list passes fields projection to buildListPath", async () => {
-    let capturedOptions: unknown = null;
-    const client = createMockClient({
-      buildListPath: (collection, options) => {
-        capturedOptions = options;
-        return `/api/db/collections/${collection}/records`;
-      },
-      request: async () => ({ data: [] }),
-    });
-    const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    await col.list({ fields: ["title", "content"] });
-    expect(capturedOptions).toEqual({ fields: ["title", "content"] });
-  });
-
-  test("get returns single record", async () => {
+  test("createQuery().where().first() returns first match or null", async () => {
     const client = createMockClient({
       request: async () => ({
-        data: { id: "rec_1", title: "Hello", content: "World", created_at: "now", updated_at: "now" },
+        data: [
+          { id: "rec_1", title: "Hello", content: "World", created_at: "now", updated_at: "now" },
+        ],
       }),
     });
     const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    const record = await col.get("rec_1");
-    expect(record.id).toBe("rec_1");
+    const record = await col.createQuery().where("id", "rec_1").first();
+    expect(record).not.toBeNull();
+    expect(record!.id).toBe("rec_1");
   });
 
   test("update sends PATCH and returns updated record", async () => {
@@ -110,48 +90,13 @@ describe("TypedCollectionImpl", () => {
     expect(capturedMethod).toBe("DELETE");
   });
 
-  test("count returns number", async () => {
+  test("createQuery().count() returns number", async () => {
     const client = createMockClient({
-      request: async () => ({ data: { count: 7 } }),
+      request: async () => ({ data: [{ count: 7 }] }),
     });
     const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    const count = await col.count();
+    const count = await col.createQuery().count();
     expect(count).toBe(7);
-  });
-
-  test("count with filter builds query params", async () => {
-    let capturedPath = "";
-    const client = createMockClient({
-      request: async (_method, path) => {
-        capturedPath = path as string;
-        return { data: { count: 3 } };
-      },
-    });
-    const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    const count = await col.count({ title: "Hello" });
-    expect(count).toBe(3);
-    expect(capturedPath).toContain("title=Hello");
-  });
-
-  test("count throws on object filter values", async () => {
-    const client = createMockClient();
-    const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    try {
-      await col.count({ title: { $eq: "Hello" } as unknown as string });
-      expect.unreachable("Should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(BoltstoreError);
-      expect((err as BoltstoreError).code).toBe("INVALID_FILTER");
-    }
-  });
-
-  test("distinct returns values", async () => {
-    const client = createMockClient({
-      request: async () => ({ data: { field: "title", values: ["A", "B", "C"] } }),
-    });
-    const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    const values = await col.distinct("title");
-    expect(values).toEqual(["A", "B", "C"]);
   });
 
   test("batch returns BatchResult", async () => {
@@ -165,32 +110,19 @@ describe("TypedCollectionImpl", () => {
     expect(result.created).toBe(2);
   });
 
-  test("paginate returns paginated result", async () => {
+  test("createQuery().paginate() returns paginated result", async () => {
     const client = createMockClient({
       request: async () => ({
         data: [{ id: "rec_1", title: "A", content: "a", created_at: "now", updated_at: "now" }],
-        meta: { page: 1, per_page: 10, total: 1, total_pages: 1 },
+        meta: { total: 1 },
       }),
     });
     const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    const result = await col.paginate({ page: 1, perPage: 10 });
+    const result = await col.createQuery().paginate(1, 10);
     expect(result.data).toHaveLength(1);
     expect(result.meta.page).toBe(1);
-  });
-
-  test("paginate passes sort, direction, filter params", async () => {
-    let capturedPath = "";
-    const client = createMockClient({
-      request: async (_method, path) => {
-        capturedPath = path as string;
-        return { data: [], meta: { page: 1, per_page: 10, total: 0, total_pages: 0 } };
-      },
-    });
-    const col = new TypedCollectionImpl<Post>(client, "posts", (p) => `/api/db${p}`);
-    await col.paginate({ page: 1, sort: "title", direction: "desc", filter: { title: "Hello" } });
-    expect(capturedPath).toContain("sort=title");
-    expect(capturedPath).toContain("direction=desc");
-    expect(capturedPath).toContain("title=Hello");
+    expect(result.meta.per_page).toBe(10);
+    expect(result.meta.total).toBe(1);
   });
 
   test("subscribe registers and unsubscribes callbacks", () => {

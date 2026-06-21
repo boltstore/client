@@ -1,5 +1,6 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { BoltstoreClient, BoltstoreError } from "../src/client";
+import { ClientQueryBuilder } from "../src/query-builder";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -39,73 +40,38 @@ describe("BoltstoreClient — dbPath", () => {
   });
 });
 
-describe("BoltstoreClient — buildListPath", () => {
-  test("builds path with sort and direction", () => {
+describe("BoltstoreClient — createQuery", () => {
+  test("returns a ClientQueryBuilder", () => {
     const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const path = client.buildListPath("users", { sort: "name", direction: "asc" });
-    expect(path).toContain("/api/dbs_app/collections/users/records");
-    expect(path).toContain("sort=name");
-    expect(path).toContain("direction=asc");
+    const qb = client.createQuery();
+    expect(qb).toBeInstanceOf(ClientQueryBuilder);
   });
 
-  test("builds path with limit and offset", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const path = client.buildListPath("users", { limit: 10, offset: 20 });
-    expect(path).toContain("limit=10");
-    expect(path).toContain("offset=20");
-  });
-
-  test("builds path with page and perPage", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const path = client.buildListPath("users", { page: 2, perPage: 25 });
-    expect(path).toContain("page=2");
-    expect(path).toContain("per_page=25");
-  });
-
-  test("builds path with fields", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const path = client.buildListPath("users", { fields: ["name", "email"] });
-    expect(path).toContain("fields=name%2Cemail");
-  });
-
-  test("builds path with expand", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const path = client.buildListPath("posts", { expand: ["author", "category"] });
-    expect(path).toContain("expand=author%2Ccategory");
-  });
-
-  test("builds path with filter", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const path = client.buildListPath("users", { filter: { name: "Alice", age: 30 } });
-    expect(path).toContain("name=Alice");
-    expect(path).toContain("age=30");
-  });
-
-  test("skips null and undefined filter values", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const path = client.buildListPath("users", { filter: { name: "Alice", deleted: null, archived: undefined } });
-    expect(path).toContain("name=Alice");
-    expect(path).not.toContain("deleted");
-    expect(path).not.toContain("archived");
-  });
-
-  test("skips object filter values", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const path = client.buildListPath("users", { filter: { name: "Alice", meta: { key: "val" } } });
-    expect(path).toContain("name=Alice");
-    expect(path).not.toContain("meta");
-  });
-
-  test("handles array filter values", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const path = client.buildListPath("users", { filter: { status: ["active", "pending"] } });
-    expect(path).toContain("status=active%2Cpending");
-  });
-
-  test("no query string when no options", () => {
-    const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
-    const path = client.buildListPath("users");
-    expect(path).toBe("/api/dbs_app/collections/users/records");
+  test("sends POST request to /query endpoint", async () => {
+    let capturedUrl = "";
+    let capturedMethod = "";
+    let capturedBody: unknown;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url: string, init: RequestInit) => {
+      capturedUrl = url as string;
+      capturedMethod = init.method ?? "";
+      capturedBody = init.body ? JSON.parse(init.body as string) : undefined;
+      return new Response(JSON.stringify({ data: [{ id: "1", name: "test" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    try {
+      const client = new BoltstoreClient({ baseUrl: "http://localhost:8080", databaseId: "dbs_app" });
+      const qb = client.createQuery();
+      qb.from("items");
+      await qb.where("name", "test").get();
+      expect(capturedUrl).toBe("http://localhost:8080/api/dbs_app/query");
+      expect(capturedMethod).toBe("POST");
+      expect(capturedBody).toHaveProperty("collection", "items");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
