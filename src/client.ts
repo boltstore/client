@@ -19,7 +19,7 @@ export class BoltstoreClient {
 
   // --- Database operations ---
 
-  async info(): Promise<DatabaseInfo> {
+  async info(): Promise<DatabaseInfo | undefined> {
     return this.adminReq<DatabaseInfo>("GET", `/api/databases/${this.database}`);
   }
 
@@ -53,10 +53,10 @@ export class BoltstoreClient {
   // --- Config ---
 
   config = {
-    get: async (): Promise<Record<string, unknown>> => {
+    get: async (): Promise<Record<string, unknown> | undefined> => {
       return this.adminReq<Record<string, unknown>>("GET", `/api/databases/${this.database}/config`);
     },
-    update: async (data: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    update: async (data: Record<string, unknown>): Promise<Record<string, unknown> | undefined> => {
       return this.adminReq<Record<string, unknown>>("PATCH", `/api/databases/${this.database}/config`, data);
     },
   };
@@ -68,13 +68,13 @@ export class BoltstoreClient {
       const res = await this.adminReq<ApiKey[]>("GET", `/api/databases/${this.database}/keys`);
       return res ?? [];
     },
-    create: async (label: string): Promise<CreatedApiKey> => {
+    create: async (label: string): Promise<CreatedApiKey | undefined> => {
       return this.adminReq<CreatedApiKey>("POST", `/api/databases/${this.database}/keys`, { label });
     },
     revoke: async (keyId: string): Promise<void> => {
       await this.adminReq("DELETE", `/api/databases/${this.database}/keys/${keyId}`);
     },
-    rotate: async (keyId: string): Promise<{ id: string; key: string }> => {
+    rotate: async (keyId: string): Promise<{ id: string; key: string } | undefined> => {
       return this.adminReq("POST", `/api/databases/${this.database}/keys/${keyId}/rotate`);
     },
   };
@@ -124,7 +124,7 @@ export class BoltstoreClient {
 
   // --- Internal: used by QueryBuilder ---
 
-  async retrieveRecords(table: string, opts: { filter?: string; sort?: string; limit?: number; offset?: number; fields?: string[] }): Promise<{ data: any[]; total: number }> {
+  async retrieveRecords(table: string, opts: { filter?: string; sort?: string; limit?: number; offset?: number; fields?: string[] }): Promise<{ data: Record<string, unknown>[]; total: number }> {
     const searchParams = new URLSearchParams();
     if (opts.filter) searchParams.set("filter", opts.filter);
     if (opts.sort) searchParams.set("sort", opts.sort);
@@ -132,8 +132,9 @@ export class BoltstoreClient {
     if (opts.offset) searchParams.set("offset", String(opts.offset));
     if (opts.fields) opts.fields.forEach(f => searchParams.append("fields", f));
     const qs = searchParams.toString();
-    const res = await this.req<any[]>("GET", `/api/databases/${this.database}/tables/${table}/records${qs ? "?" + qs : ""}`);
-    return { data: res ?? [], total: (res as any)?.length ?? 0 };
+    const res = await this.requestWithMeta<Record<string, unknown>[]>(`GET`, `/api/databases/${this.database}/tables/${table}/records${qs ? "?" + qs : ""}`);
+    const total = typeof res.meta?.total === "number" ? res.meta.total : (res.data?.length ?? 0);
+    return { data: res.data ?? [], total };
   }
 
   // --- Internal request methods ---
@@ -142,16 +143,15 @@ export class BoltstoreClient {
     return this.request<T>(method, path);
   }
 
-  private async adminReq<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
-    const res = await this.request<T>(method, path, body, true);
-    return res as T;
+  private async adminReq<T>(method: HttpMethod, path: string, body?: unknown): Promise<T | undefined> {
+    return this.request<T>(method, path, body, true);
   }
 
   async req<T>(method: HttpMethod, path: string, body?: unknown): Promise<T | undefined> {
     return this.request<T>(method, path, body, false);
   }
 
-  private async request<T>(method: HttpMethod, path: string, body?: unknown, requireAdmin?: boolean): Promise<T | undefined> {
+  private async requestWithMeta<T>(method: HttpMethod, path: string, body?: unknown): Promise<{ data: T | undefined; meta?: Record<string, unknown> }> {
     const headers: Record<string, string> = { "Content-Type": "application/json", "Accept": "application/json" };
     if (this.key) headers["Authorization"] = `Bearer ${this.key}`;
 
@@ -162,13 +162,18 @@ export class BoltstoreClient {
     const text = await response.text().catch(() => "");
 
     if (!text) {
-      if (response.ok) return undefined;
+      if (response.ok) return { data: undefined };
       throw new Error(`Request failed (${response.status})`);
     }
 
     const json = JSON.parse(text) as ApiResponse<T>;
     if (json.error) throw new Error(json.error.message);
-    return json.data;
+    return { data: json.data, meta: json.meta };
+  }
+
+  private async request<T>(method: HttpMethod, path: string, body?: unknown, requireAdmin?: boolean): Promise<T | undefined> {
+    const { data } = await this.requestWithMeta<T>(method, path, body);
+    return data;
   }
 }
 
@@ -186,15 +191,20 @@ export class TableRef<T extends Record<string, unknown>> {
   }
 
   async list(opts?: { filter?: Record<string, unknown>; sort?: string; limit?: number; offset?: number; fields?: string[] }): Promise<PaginatedResult<T>> {
-    const searchParams = new URLSearchParams();
-    if (opts?.filter) searchParams.set("filter", JSON.stringify(opts.filter));
-    if (opts?.sort) searchParams.set("sort", opts.sort);
-    if (opts?.limit) searchParams.set("limit", String(opts.limit));
-    if (opts?.offset) searchParams.set("offset", String(opts.offset));
-    if (opts?.fields) opts.fields.forEach(f => searchParams.append("fields", f));
-    const qs = searchParams.toString();
-    const res = await this.client.req<PaginatedResult<T>["data"]>("GET", `/api/databases/${this.client["database"]}/tables/${this.name}/records${qs ? "?" + qs : ""}`);
-    return { data: res ?? [], total: 0, limit: opts?.limit ?? 50, offset: opts?.offset ?? 0 } as PaginatedResult<T>;
+    const filter = opts?.filter ? JSON.stringify(opts.filter) : undefined;
+    const result = await this.client.retrieveRecords(this.name, {
+      filter,
+      sort: opts?.sort,
+      limit: opts?.limit,
+      offset: opts?.offset,
+      fields: opts?.fields,
+    });
+    return {
+      data: result.data as T[],
+      total: result.total,
+      limit: opts?.limit ?? 50,
+      offset: opts?.offset ?? 0,
+    };
   }
 
   async get(id: string | number): Promise<T | null> {
@@ -220,6 +230,14 @@ export class TableRef<T extends Record<string, unknown>> {
 
 type WhereClause = { field: string; op: string; value: unknown; or?: boolean };
 
+const SUPPORTED_OPS = new Set(["eq", "ne", "gt", "gte", "lt", "lte", "in", "like", "glob"]);
+
+function validateOp(op: string): void {
+  if (!SUPPORTED_OPS.has(op)) {
+    throw new Error(`Unsupported query operator "${op}". Supported: ${Array.from(SUPPORTED_OPS).join(", ")}`);
+  }
+}
+
 export class QueryBuilder<T extends Record<string, unknown>> {
   private wheres: WhereClause[] = [];
   private orderByFields: string[] = [];
@@ -233,11 +251,13 @@ export class QueryBuilder<T extends Record<string, unknown>> {
   ) {}
 
   where(field: string, op: string, value: unknown): this {
+    validateOp(op);
     this.wheres.push({ field, op, value, or: false });
     return this;
   }
 
   orWhere(field: string, op: string, value: unknown): this {
+    validateOp(op);
     this.wheres.push({ field, op, value, or: true });
     return this;
   }
@@ -298,13 +318,14 @@ export class QueryBuilder<T extends Record<string, unknown>> {
 
     if (orGroups.length > 0) filter.$or = orGroups;
 
-    return this.client.retrieveRecords(this.table, {
+    const result = await this.client.retrieveRecords(this.table, {
       filter: Object.keys(filter).length > 0 ? JSON.stringify(filter) : undefined,
       sort: this.orderByFields.length > 0 ? this.orderByFields.join(",") : undefined,
       limit: this.limitCount,
       offset: this.offsetCount,
       fields: this.selectFields,
     });
+    return { data: result.data as T[], total: result.total };
   }
 }
 
