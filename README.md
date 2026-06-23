@@ -1,8 +1,8 @@
 # @boltstore/client
 
-Browser-first JavaScript/TypeScript SDK for Boltstore.
+JavaScript/TypeScript SDK for [Boltstore](https://github.com/boltstore/boltstore) — the self-hostable SQLite-over-HTTP **Database-as-a-Service**.
 
-**Note:** Realtime subscriptions and offline sync are opt-in features that must be explicitly enabled.
+HTTP-only. No realtime, no offline sync, no client-side cache. Boltstore is a database platform (DBaaS), not a BaaS — BaaS-style features (RLS, user auth, realtime, sync) are application-layer concerns or future plugin territory, not part of this SDK. The client talks to the Boltstore server REST API directly.
 
 ## Installation
 
@@ -16,208 +16,199 @@ npm install @boltstore/client
 import { BoltstoreClient } from "@boltstore/client";
 
 const client = new BoltstoreClient({
-  baseUrl: "http://localhost:8080",
-  databaseId: "dbs_xxx",
+  url: "http://localhost:8080",
+  database: "myapp",
+  key: "boltstore_...", // per-database API key, or an admin session token for admin methods
 });
 
-// Collections
-const collections = await client.collections.list();
+// Tables
+const tables = await client.tables.list();
+await client.tables.create("posts", [
+  { name: "id", type: "integer", primary_key: true, auto_increment: true },
+  { name: "title", type: "text", nullable: false },
+  { name: "views", type: "integer", default: "0" },
+]);
 
-// Typed CRUD
-const posts = client.collection("posts");
+// Typed record CRUD
+const posts = client.table<{ id: number; title: string; views: number }>("posts");
+const created = await posts.create({ title: "Hello World", views: 0 });
+const fetched = await posts.get(created.id);
+await posts.update(created.id, { views: 1 });
+await posts.delete(created.id);
 
-const record = await posts.create({ title: "Hello World" });
-const updated = await posts.update(record.id, { title: "Updated" });
-await posts.delete(record.id);
-
-// Query builder (replaces list/get/count/paginate — one API)
-const results = await posts
-  .createQuery()
-  .where("status", "published")
-  .whereGte("views", 100)
-  .orderBy("created_at", "desc")
+// Query builder
+const list = await posts
+  .query()
+  .where("title", "like", "Hello%")
+  .orderBy("id", "desc")
   .limit(10)
   .get();
 
-const first = await posts
-  .createQuery()
-  .where("slug", "hello-world")
-  .first();
-
-const total = await posts
-  .createQuery()
-  .where("author_id", userId)
-  .count();
-
-const page = await posts
-  .createQuery()
-  .where("category", "tech")
-  .orderBy("created_at", "desc")
-  .paginate(1, 20);
-
-// Auth
-const { accessToken, refreshToken } = await client.auth.login("user@example.com", "secret");
+// Raw SQL (SELECT only for non-admin keys — see server README)
+const rows = await client.sql<{ id: number; title: string }>(
+  "SELECT id, title FROM posts WHERE views > ? ORDER BY id",
+  [0],
+);
 ```
 
-## API
-
-### Client
+## Configuration
 
 ```typescript
 const client = new BoltstoreClient({
-  baseUrl: string;
-  databaseId: string;
-  token?: string;            // optional, set after login
-  refreshToken?: string;     // optional
-  localStore?: LocalStore;   // optional, only used when enableSync is true
-  enableRealtime?: boolean;  // default: false — ⚠️ unstable
-  enableSync?: boolean;      // default: false — ⚠️ unstable
+  url: string;        // Boltstore server base URL, e.g. "http://localhost:8080"
+  database: string;   // Database name (must match VALID_NAME: /^[a-z0-9][a-z0-9_-]*$/)
+  key?: string;       // API key or admin session token. Set later via setKey().
 });
 
-client.setToken(token: string | undefined): void;
-client.getToken(): string | undefined;
-client.setRefreshToken(token: string | undefined): void;
-client.getRefreshToken(): string | undefined;
+client.setKey(key: string | undefined): void;
 ```
 
-> **⚠️ Unstable:** Realtime and sync features are experimental. They work for basic use cases but may have edge cases with reconnection, conflict resolution, and token expiry during extended offline periods. Enable at your own risk.
+The `key` is sent as `Authorization: Bearer <key>` on every request. Use a per-database API key for data access, or an admin session token (from `POST /api/admin/login`) for admin methods.
 
-**Feature flags:**
+## API
 
-| Flag | Default | When disabled | When enabled |
-|---|---|---|---|
-| `enableRealtime` | `false` | No WebSocket, `subscribe()` returns no-op | WebSocket subscriptions for live updates |
-| `enableSync` | `false` | Direct HTTP only, no local cache | IndexedDB offline cache with auto-sync |
-
-**MVP usage (no realtime, no sync):**
-```typescript
-const client = new BoltstoreClient({ baseUrl, databaseId });
-// All operations go directly to the server via HTTP.
-// No WebSocket, no IndexedDB, no offline fallback.
-const todo = await client.collection("todos").create({ title: "Hello" });
-const list = await client.collection("todos").createQuery().get();
-```
-
-### Collections (schema, read-only)
+### Database operations
 
 ```typescript
-client.collections.list(): Promise<CollectionInfo[]>
-client.collections.get(name: string): Promise<CollectionInfo>
+// Requires admin key/session
+await client.info(): Promise<DatabaseInfo>;       // GET /api/databases/:database
+await client.delete(): Promise<void>;             // DELETE /api/databases/:database
+await client.export(): Promise<Blob>;             // POST /api/databases/:database/export
+await BoltstoreClient.import({                    // static — POST /api/databases/import
+  url: string;
+  file: Blob | File;
+  name?: string;
+  key?: string;
+}): Promise<DatabaseInfo>;
 ```
 
-### Records (typed CRUD via `client.collection()`)
+### Config
 
 ```typescript
-const col = client.collection<Fields>("collection_name");
-
-col.create(data): Promise<TypedRecord<Fields>>;
-col.update(id: string, data: Partial<Fields>): Promise<TypedRecord<Fields>>;
-col.delete(id: string): Promise<void>;
-col.batch(operations): Promise<BatchResult>;
-col.subscribe(callback): () => void;  // requires enableRealtime, no-op otherwise
-col.createQuery(): ClientQueryBuilder<Fields>;  // replaces list/get/count/paginate
+// Requires admin key/session
+await client.config.get(): Promise<Record<string, unknown>>;
+await client.config.update(data: Record<string, unknown>): Promise<Record<string, unknown>>;
 ```
 
-### Query builder (replaces `list`, `get`, `count`, `distinct`, `paginate`)
-
-All read operations use the same builder:
+### API keys
 
 ```typescript
-// Filtering
-col.createQuery()
-  .where("status", "active")            // shorthand equality
-  .where("views", "gt", 100)            // explicit operator
-  .whereGte("priority", 5)              // typed method
-  .whereIn("category", ["a", "b"])
-  .whereNull("deleted_at")
-  .where((q) => q.where("x", 1).orWhere("y", 2))  // nested groups
-  .get();
-
-// Sorting
-col.createQuery()
-  .orderBy("created_at", "desc")
-  .orderBy("name")                      // defaults to asc
-  .get();
-
-// Projection
-col.createQuery()
-  .select("id", "title", "author.name") // JSON path support
-  .get();
-
-// Search
-col.createQuery()
-  .search("keyword", ["title", "body"])
-  .get();
-
-// Aggregation
-col.createQuery()
-  .where("category", "tech")
-  .aggregate({ function: "$count", alias: "total" })
-  .get();
-
-// Group by with having
-col.createQuery()
-  .aggregate({ function: "$count", alias: "cnt" })
-  .groupBy("category")
-  .having("cnt", "gt", 1)
-  .get();
-
-// Convenience methods
-col.createQuery().where("id", recordId).first();    // single record or null
-col.createQuery().where("author", userId).count();  // count total
-col.createQuery().paginate(1, 20);                  // { data, meta: { page, per_page, total, total_pages } }
-
-// Cross-collection queries
-client.createQuery()
-  .from("posts")
-  .join("authors", [{ left: "posts.author_id", operator: "=", right: "authors.id" }])
-  .where("authors.role", "admin")
-  .get();
+// Requires admin key/session
+await client.keys.list(): Promise<ApiKey[]>;
+await client.keys.create(label: string): Promise<CreatedApiKey>; // key is returned once
+await client.keys.rotate(keyId: string): Promise<{ id: string; key: string }>;
+await client.keys.revoke(keyId: string): Promise<void>;
 ```
 
-### Live subscriptions (requires `enableRealtime: true`)
+### Tables
 
 ```typescript
-// Subscribe to all changes on a collection
-const unsub = col.subscribe((event) => {
-  // event.event: "create" | "update" | "delete"
-  // event.record: the changed record
-  // event.previous: previous state (for updates)
-});
-
-// Unsubscribe
-unsub();
+// Accessible with API key or admin
+await client.tables.list(): Promise<string[]>;
+await client.tables.create(name: string, columns: ColumnDef[]): Promise<{ name: string; columns: ColumnDef[] }>;
+await client.tables.get(name: string): Promise<TableSchema>;
+await client.tables.update(name: string, changes: {
+  name?: string;
+  add_columns?: ColumnDef[];
+  drop_columns?: string[];
+  rename_column?: { from: string; to: string };
+}): Promise<void>;
+await client.tables.delete(name: string): Promise<void>;
 ```
+
+### Records (typed)
+
+```typescript
+const t = client.table<Fields>("table_name");
+
+await t.create(data: Fields): Promise<Fields>;
+await t.list(opts?: {
+  filter?: Record<string, unknown>;   // compiled to server filter DSL
+  sort?: string;                       // e.g. "created_at" or "-views,created_at"
+  limit?: number;                      // server max is 1000, default 50
+  offset?: number;
+  fields?: string[];                   // column projection
+}): Promise<PaginatedResult<Fields>>;
+await t.get(id: string | number): Promise<Fields | null>;
+await t.update(id: string | number, data: Partial<Fields>): Promise<Fields>;
+await t.delete(id: string | number): Promise<void>;
+t.query(): QueryBuilder<Fields>;
+```
+
+### Query builder
+
+```typescript
+const q = t.query();
+
+q.where(field: string, op: string, value: unknown): this;   // op: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "like" | "glob"
+q.orWhere(field: string, op: string, value: unknown): this;
+q.orderBy(field: string, dir?: "asc" | "desc"): this;
+q.limit(n: number): this;
+q.offset(n: number): this;
+q.select(...fields: (keyof Fields)[]): this;
+
+await q.get(): Promise<Fields[]>;          // returns matching rows
+await q.first(): Promise<Fields | null>;   // limit(1).get()[0] ?? null
+await q.count(): Promise<number>;          // ⚠️ see "Known issues" below
+await q.paginate(page: number, perPage?: number): Promise<PaginatedResult<Fields>>;
+```
+
+### Raw SQL
+
+```typescript
+await client.sql<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+```
+
+Sends `{ sql, params }` to `POST /api/databases/:database/query`. Per the server's policy, **non-admin API keys may only execute `SELECT` statements**; DDL/DML/`PRAGMA`/`ATTACH` require an admin key. See the server README's "Raw SQL endpoint" section.
 
 ### Health
 
 ```typescript
-client.health.check(): Promise<HealthCheck>;
+await client.health(): Promise<HealthCheck>; // { status, version, databases }
 ```
 
-### Offline behavior (requires `enableSync: true`)
-
-When both `enableSync: true` is set on the client and `enableSync: true` is set on the server, the SDK caches data in IndexedDB and syncs changes when the connection is restored.
+## Types
 
 ```typescript
-const client = new BoltstoreClient({
-  baseUrl, databaseId,
-  enableSync: true,     // ⚠️ unstable
-  enableRealtime: true, // ⚠️ unstable — required for push notification of remote changes
-});
+interface DatabaseInfo { id: string; name: string; path: string; createdAt: string; tables?: string[]; }
+interface ApiKey { id: string; label: string; created_at: string; last_used_at?: string; }
+interface CreatedApiKey extends ApiKey { key: string; }
+interface TableSchema { name: string; columns: TableColumn[]; }
+interface TableColumn { cid: number; name: string; type: string; notnull: number; dflt_value?: string; pk: number; }
+interface ColumnDef {
+  name: string;
+  type: "text" | "integer" | "real" | "blob" | "numeric" | "boolean" | "date" | "datetime";
+  nullable?: boolean;
+  primary_key?: boolean;
+  auto_increment?: boolean;
+  unique?: boolean;
+  default?: string;
+  references?: { table: string; column: string };
+}
+interface ApiResponse<T> { data?: T; meta?: Record<string, unknown>; error?: { code: string; message: string; details?: unknown }; }
+interface PaginatedResult<T> { data: T[]; total: number; limit: number; offset: number; }
+interface HealthCheck { status: string; version: string; databases: number; }
 ```
 
-Offline behavior:
-- **Writes** are stored locally in IndexedDB and queued for sync
-- **Reads** return cached data from IndexedDB with the same query API
-- **Filters, sorting, and search** work offline using the client-side filter engine
-- **Reconnection** is automatic — queued writes are flushed and remote changes are replayed via WebSocket
+## Authentication model
+
+The SDK holds a single `key` used for every request. Methods that hit `/api/databases/*` admin routes (database `info`/`delete`/`export`, `config.*`, `keys.*`) require an **admin session token** or an admin API key. Methods that hit `/api/databases/:db/tables/*`, `/records/*`, and `/query` accept either a per-database API key or an admin credential.
+
+If you only have a per-database API key, use the `tables`, `table()`, `records`, and `sql()` methods. Calling `info()`, `keys.list()`, or `config.get()` will return `401 UNAUTHORIZED`.
+
+## Known issues
+
+These are tracked in the server's `audits.md`.
+
+- **`PaginatedResult.total` is currently broken.** `t.list()` and `QueryBuilder.count()` / `paginate()` return `total` as the *current page's row count* (capped at `limit`, default 50), **not** the total number of matching rows. The server returns the correct `meta.total`, but the SDK discards `meta` and uses `data.length`. Do not rely on `total` for pagination page-count math until `audits.md` C11.1 / H11.2 are fixed.
+- **`adminReq` return type is loose.** Methods typed as returning `T` may actually return `undefined` for empty 2xx responses. Defensive `?? []` / `?? null` at call sites is recommended until H11.3 is fixed.
+- **`QueryBuilder.where` `op` is not validated client-side.** An unsupported `op` is silently dropped by the server (the filter clause is omitted), so the query returns rows that don't match the intended filter. Stick to the supported ops listed above.
 
 ## Development
 
 ```bash
 bun install
-bun run build    # compile TypeScript
+bun run build    # compile TypeScript to dist/
 bun test         # run tests
 bun run dev      # watch mode
 ```
