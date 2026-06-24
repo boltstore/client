@@ -38,6 +38,10 @@ export class BoltstoreClient {
     return res.blob();
   }
 
+  async import(file: Blob | File, name?: string): Promise<DatabaseInfo> {
+    return BoltstoreClient.import({ url: this.baseUrl, file, name, key: this.key });
+  }
+
   static async import(config: { url: string; file: Blob | File; name?: string; key?: string }): Promise<DatabaseInfo> {
     const form = new FormData();
     form.append("file", config.file);
@@ -124,6 +128,13 @@ export class BoltstoreClient {
 
   // --- Internal: used by QueryBuilder ---
 
+  /**
+   * Fetch records with filtering, sorting, and pagination.
+   *
+   * The `filter` parameter must be a JSON string (use JSON.stringify on objects).
+   * This is a public API — callers are responsible for encoding their own filters.
+   * The internal QueryBuilder handles this automatically.
+   */
   async retrieveRecords(table: string, opts: { filter?: string; sort?: string; limit?: number; offset?: number; fields?: string[] }): Promise<{ data: Record<string, unknown>[]; total: number }> {
     const searchParams = new URLSearchParams();
     if (opts.filter) searchParams.set("filter", opts.filter);
@@ -132,7 +143,7 @@ export class BoltstoreClient {
     if (opts.offset) searchParams.set("offset", String(opts.offset));
     if (opts.fields) opts.fields.forEach(f => searchParams.append("fields", f));
     const qs = searchParams.toString();
-    const res = await this.requestWithMeta<Record<string, unknown>[]>(`GET`, `/api/databases/${this.database}/tables/${table}/records${qs ? "?" + qs : ""}`);
+    const res = await this.requestWithMeta<Record<string, unknown>[]>("GET", `/api/databases/${this.database}/tables/${table}/records${qs ? "?" + qs : ""}`);
     const total = typeof res.meta?.total === "number" ? res.meta.total : (res.data?.length ?? 0);
     return { data: res.data ?? [], total };
   }
