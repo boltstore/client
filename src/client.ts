@@ -65,13 +65,14 @@ export class BoltstoreClient {
     return BoltstoreClient.import({ url: this.baseUrl, file: fileOrConfig.file, name: fileOrConfig.name, key });
   }
 
-  static async import(config: { url: string; file: Blob | File; name?: string; key?: string }): Promise<DatabaseInfo> {
+  static async import(config: { url: string; file: Blob | File; name?: string; key?: string; timeout?: number }): Promise<DatabaseInfo> {
     const form = new FormData();
     form.append("file", config.file);
     if (config.name) form.append("name", config.name);
     const headers: Record<string, string> = {};
     if (config.key) headers["Authorization"] = `Bearer ${config.key}`;
-    const res = await globalThis.fetch(`${config.url.replace(/\/$/, "")}/api/databases/import`, { method: "POST", headers, body: form });
+    const signal = AbortSignal.timeout(config.timeout ?? 30000);
+    const res = await globalThis.fetch(`${config.url.replace(/\/$/, "")}/api/databases/import`, { method: "POST", headers, body: form, signal });
     const json = await res.json() as ApiResponse<DatabaseInfo>;
     if (json.error) throw new Error(json.error.message);
     return json.data!;
