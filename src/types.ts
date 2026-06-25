@@ -2,6 +2,8 @@ export interface ClientConfig {
   url: string;
   database: string;
   key?: string;
+  keyProvider?: () => string | undefined | Promise<string | undefined>;
+  timeout?: number;
 }
 
 export interface DatabaseInfo {
@@ -9,6 +11,9 @@ export interface DatabaseInfo {
   name: string;
   path: string;
   createdAt: string;
+  updatedAt?: string;
+  group?: string;
+  readonly?: boolean;
   tables?: string[];
 }
 
@@ -25,7 +30,9 @@ export interface ApiKey {
   last_used_at?: string;
 }
 
-export interface CreatedApiKey extends ApiKey {
+export interface CreatedApiKey {
+  id: string;
+  label: string;
   key: string;
 }
 
@@ -45,10 +52,12 @@ export interface TableColumn {
 
 export interface ColumnDef {
   name: string;
-  type: "text" | "integer" | "real" | "blob" | "numeric" | "boolean";
+  type: "text" | "integer" | "real" | "blob" | "numeric" | "boolean" | "date" | "datetime";
   nullable?: boolean;
   primary_key?: boolean;
+  auto_increment?: boolean;
   unique?: boolean;
+  references?: { table: string; column: string };
   default?: string;
 }
 
@@ -61,6 +70,6 @@ export interface ApiResponse<T = unknown> {
 export interface PaginatedResult<T> {
   data: T[];
   total: number;
-  limit: number;
-  offset: number;
+  limit?: number;
+  offset?: number;
 }

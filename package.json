@@ -1,6 +1,6 @@
 {
   "name": "@boltstore/client",
-  "version": "0.8.0",
+  "version": "1.0.0",
   "private": false,
   "type": "module",
   "description": "Boltstore client SDK — JavaScript/TypeScript SDK for Boltstore",
@@ -12,6 +12,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "lint": "tsc --noEmit",
     "test": "bun test",
     "prepublish": "bun run build"
   },

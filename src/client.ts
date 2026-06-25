@@ -6,21 +6,39 @@ export class BoltstoreClient {
   private baseUrl: string;
   private database: string;
   private key: string | undefined;
+  private keyProvider?: () => string | undefined | Promise<string | undefined>;
+  private timeout: number;
 
   constructor(config: ClientConfig) {
     this.baseUrl = config.url.replace(/\/$/, "");
     this.database = config.database;
     this.key = config.key;
+    this.keyProvider = config.keyProvider;
+    this.timeout = config.timeout ?? 30000;
+    if (this.key && this.baseUrl.startsWith("http://") && !this.baseUrl.includes("localhost") && !this.baseUrl.includes("127.0.0.1") && !this.baseUrl.includes("::1")) {
+      console.warn("[boltstore] Warning: Sending API keys over plain HTTP — use HTTPS in production.");
+    }
   }
 
   setKey(key: string | undefined): void {
     this.key = key;
   }
 
+  get databaseName(): string {
+    return this.database;
+  }
+
+  private async resolveKey(): Promise<string | undefined> {
+    if (this.keyProvider) return this.keyProvider();
+    return this.key;
+  }
+
   // --- Database operations ---
 
-  async info(): Promise<DatabaseInfo | undefined> {
-    return this.adminReq<DatabaseInfo>("GET", `/api/databases/${this.database}`);
+  async info(): Promise<DatabaseInfo> {
+    const res = await this.adminReq<DatabaseInfo>("GET", `/api/databases/${this.database}`);
+    if (!res) throw new Error("Empty response");
+    return res;
   }
 
   async delete(): Promise<void> {
@@ -28,18 +46,15 @@ export class BoltstoreClient {
   }
 
   async export(): Promise<Blob> {
-    const headers: Record<string, string> = {};
-    if (this.key) headers["Authorization"] = `Bearer ${this.key}`;
-    const res = await globalThis.fetch(`${this.baseUrl}/api/databases/${this.database}/export`, { method: "POST", headers });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err?.error?.message || `Export failed (${res.status})`);
-    }
-    return res.blob();
+    return this.requestBlob("POST", `/api/databases/${this.database}/export`);
   }
 
-  async import(file: Blob | File, name?: string): Promise<DatabaseInfo> {
-    return BoltstoreClient.import({ url: this.baseUrl, file, name, key: this.key });
+  async import(fileOrConfig: Blob | File | { file: Blob | File; name?: string }, name?: string): Promise<DatabaseInfo> {
+    const key = await this.resolveKey();
+    if (fileOrConfig instanceof Blob) {
+      return BoltstoreClient.import({ url: this.baseUrl, file: fileOrConfig, name, key });
+    }
+    return BoltstoreClient.import({ url: this.baseUrl, file: fileOrConfig.file, name: fileOrConfig.name, key });
   }
 
   static async import(config: { url: string; file: Blob | File; name?: string; key?: string }): Promise<DatabaseInfo> {
@@ -57,8 +72,10 @@ export class BoltstoreClient {
   // --- Config ---
 
   config = {
-    get: async (): Promise<Record<string, unknown> | undefined> => {
-      return this.adminReq<Record<string, unknown>>("GET", `/api/databases/${this.database}/config`);
+    get: async (): Promise<Record<string, unknown>> => {
+      const res = await this.adminReq<Record<string, unknown>>("GET", `/api/databases/${this.database}/config`);
+      if (!res) throw new Error("Empty response");
+      return res;
     },
     update: async (data: Record<string, unknown>): Promise<Record<string, unknown> | undefined> => {
       return this.adminReq<Record<string, unknown>>("PATCH", `/api/databases/${this.database}/config`, data);
@@ -98,7 +115,7 @@ export class BoltstoreClient {
       const res = await this.req<TableSchema>("GET", `/api/databases/${this.database}/tables/${name}`);
       return res!;
     },
-    update: async (name: string, changes: { add_columns?: ColumnDef[]; drop_columns?: string[] }): Promise<void> => {
+    update: async (name: string, changes: { add_columns?: ColumnDef[]; drop_columns?: string[]; name?: string; rename_column?: { from: string; to: string } }): Promise<void> => {
       await this.req("PATCH", `/api/databases/${this.database}/tables/${name}`, changes);
     },
     delete: async (name: string): Promise<void> => {
@@ -135,17 +152,24 @@ export class BoltstoreClient {
    * This is a public API — callers are responsible for encoding their own filters.
    * The internal QueryBuilder handles this automatically.
    */
-  async retrieveRecords(table: string, opts: { filter?: string; sort?: string; limit?: number; offset?: number; fields?: string[] }): Promise<{ data: Record<string, unknown>[]; total: number }> {
+  async retrieveRecords(table: string, opts: { filter?: string; sort?: string; limit?: number; offset?: number; fields?: string[] }): Promise<{ data: Record<string, unknown>[]; total: number; meta?: Record<string, unknown> }> {
     const searchParams = new URLSearchParams();
     if (opts.filter) searchParams.set("filter", opts.filter);
     if (opts.sort) searchParams.set("sort", opts.sort);
-    if (opts.limit) searchParams.set("limit", String(opts.limit));
-    if (opts.offset) searchParams.set("offset", String(opts.offset));
+    if (opts.limit !== undefined) searchParams.set("limit", String(opts.limit));
+    if (opts.offset !== undefined) searchParams.set("offset", String(opts.offset));
     if (opts.fields) opts.fields.forEach(f => searchParams.append("fields", f));
     const qs = searchParams.toString();
     const res = await this.requestWithMeta<Record<string, unknown>[]>("GET", `/api/databases/${this.database}/tables/${table}/records${qs ? "?" + qs : ""}`);
-    const total = typeof res.meta?.total === "number" ? res.meta.total : (res.data?.length ?? 0);
-    return { data: res.data ?? [], total };
+    let total = typeof res.meta?.total === "number" ? res.meta.total : 0;
+    if (typeof res.meta?.total !== "number") {
+      const countParams = new URLSearchParams();
+      if (opts.filter) countParams.set("filter", opts.filter);
+      countParams.set("limit", "0");
+      const countRes = await this.requestWithMeta<unknown[]>("GET", `/api/databases/${this.database}/tables/${table}/records?${countParams.toString()}`);
+      total = typeof countRes.meta?.total === "number" ? countRes.meta.total : 0;
+    }
+    return { data: res.data ?? [], total, meta: res.meta };
   }
 
   // --- Internal request methods ---
@@ -155,18 +179,19 @@ export class BoltstoreClient {
   }
 
   private async adminReq<T>(method: HttpMethod, path: string, body?: unknown): Promise<T | undefined> {
-    return this.request<T>(method, path, body, true);
+    return this.request<T>(method, path, body);
   }
 
   async req<T>(method: HttpMethod, path: string, body?: unknown): Promise<T | undefined> {
-    return this.request<T>(method, path, body, false);
+    return this.request<T>(method, path, body);
   }
 
   private async requestWithMeta<T>(method: HttpMethod, path: string, body?: unknown): Promise<{ data: T | undefined; meta?: Record<string, unknown> }> {
     const headers: Record<string, string> = { "Content-Type": "application/json", "Accept": "application/json" };
-    if (this.key) headers["Authorization"] = `Bearer ${this.key}`;
+    const key = await this.resolveKey();
+    if (key) headers["Authorization"] = `Bearer ${key}`;
 
-    const init: RequestInit = { method, headers };
+    const init: RequestInit = { method, headers, signal: AbortSignal.timeout(this.timeout) };
     if (body !== undefined) init.body = JSON.stringify(body);
 
     const response = await globalThis.fetch(`${this.baseUrl}${path}`, init);
@@ -177,12 +202,34 @@ export class BoltstoreClient {
       throw new Error(`Request failed (${response.status})`);
     }
 
-    const json = JSON.parse(text) as ApiResponse<T>;
+    const contentType = response.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+      throw new Error(`Expected JSON response but got "${contentType || "none"}" (${response.status}): ${text.slice(0, 200)}`);
+    }
+
+    let json: ApiResponse<T>;
+    try { json = JSON.parse(text) as ApiResponse<T>; } catch {
+      throw new Error(`Invalid JSON response (${response.status}): ${text.slice(0, 200)}`);
+    }
     if (json.error) throw new Error(json.error.message);
     return { data: json.data, meta: json.meta };
   }
 
-  private async request<T>(method: HttpMethod, path: string, body?: unknown, requireAdmin?: boolean): Promise<T | undefined> {
+  private async requestBlob(method: HttpMethod, path: string): Promise<Blob> {
+    const headers: Record<string, string> = {};
+    const key = await this.resolveKey();
+    if (key) headers["Authorization"] = `Bearer ${key}`;
+    const res = await globalThis.fetch(`${this.baseUrl}${path}`, { method, headers, signal: AbortSignal.timeout(this.timeout) });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({} as Record<string, unknown>));
+      const errBody = err?.error;
+      const msg = typeof errBody === "string" ? errBody : typeof errBody?.message === "string" ? errBody.message : undefined;
+      throw new Error(msg || `Request failed (${res.status})`);
+    }
+    return res.blob();
+  }
+
+  private async request<T>(method: HttpMethod, path: string, body?: unknown): Promise<T | undefined> {
     const { data } = await this.requestWithMeta<T>(method, path, body);
     return data;
   }
@@ -197,7 +244,12 @@ export class TableRef<T extends Record<string, unknown>> {
   ) {}
 
   async create(data: Omit<T, keyof Record<string, never>>): Promise<T> {
-    const res = await this.client.req<T>("POST", `/api/databases/${this.client["database"]}/tables/${this.name}/records`, data);
+    const res = await this.client.req<T>("POST", `/api/databases/${this.client.databaseName}/tables/${this.name}/records`, data);
+    return res!;
+  }
+
+  async createBatch(data: T[]): Promise<T[]> {
+    const res = await this.client.req<T[]>("POST", `/api/databases/${this.client.databaseName}/tables/${this.name}/records`, data);
     return res!;
   }
 
@@ -213,23 +265,23 @@ export class TableRef<T extends Record<string, unknown>> {
     return {
       data: result.data as T[],
       total: result.total,
-      limit: opts?.limit ?? 50,
-      offset: opts?.offset ?? 0,
+      limit: typeof result.meta?.limit === "number" ? result.meta.limit : opts?.limit,
+      offset: typeof result.meta?.offset === "number" ? result.meta.offset : opts?.offset,
     };
   }
 
   async get(id: string | number): Promise<T | null> {
-    const res = await this.client.req<T>("GET", `/api/databases/${this.client["database"]}/tables/${this.name}/records/${id}`);
+    const res = await this.client.req<T>("GET", `/api/databases/${this.client.databaseName}/tables/${this.name}/records/${id}`);
     return res ?? null;
   }
 
   async update(id: string | number, data: Partial<T>): Promise<T> {
-    const res = await this.client.req<T>("PATCH", `/api/databases/${this.client["database"]}/tables/${this.name}/records/${id}`, data);
+    const res = await this.client.req<T>("PATCH", `/api/databases/${this.client.databaseName}/tables/${this.name}/records/${id}`, data);
     return res!;
   }
 
   async delete(id: string | number): Promise<void> {
-    await this.client.req("DELETE", `/api/databases/${this.client["database"]}/tables/${this.name}/records/${id}`);
+    await this.client.req("DELETE", `/api/databases/${this.client.databaseName}/tables/${this.name}/records/${id}`);
   }
 
   query(): QueryBuilder<T> {
@@ -273,12 +325,26 @@ export class QueryBuilder<T extends Record<string, unknown>> {
     return this;
   }
 
+  andWhere(field: string, op: string | Record<string, unknown>, value?: unknown): this {
+    if (typeof op === "object" && op !== null) {
+      for (const [key, val] of Object.entries(op)) {
+        validateOp(key);
+        this.wheres.push({ field, op: key, value: val, or: false });
+      }
+    } else {
+      validateOp(op as string);
+      this.wheres.push({ field, op: op as string, value, or: false });
+    }
+    return this;
+  }
+
   orderBy(field: string, dir?: "asc" | "desc"): this {
     this.orderByFields.push(dir === "desc" ? `-${field}` : field);
     return this;
   }
 
   limit(n: number): this {
+    if (typeof n === "number" && n <= 0) throw new Error("limit must be a positive number");
     this.limitCount = n;
     return this;
   }
@@ -299,12 +365,15 @@ export class QueryBuilder<T extends Record<string, unknown>> {
   }
 
   async first(): Promise<T | null> {
-    const data = await this.limit(1).get();
+    const savedLimit = this.limitCount;
+    this.limitCount = 1;
+    const data = await this.get();
+    this.limitCount = savedLimit;
     return data[0] ?? null;
   }
 
   async count(): Promise<number> {
-    const { total } = await this.execute();
+    const { total } = await this.execute(true);
     return total;
   }
 
@@ -315,7 +384,7 @@ export class QueryBuilder<T extends Record<string, unknown>> {
     return { data, total, limit: perPage, offset: (page - 1) * perPage };
   }
 
-  private async execute(): Promise<{ data: T[]; total: number }> {
+  private async execute(countOnly = false): Promise<{ data: T[]; total: number }> {
     const filter: Record<string, any> = {};
     const orGroups: Record<string, any>[] = [];
 
@@ -323,7 +392,8 @@ export class QueryBuilder<T extends Record<string, unknown>> {
       if (w.or) {
         orGroups.push({ [w.field]: { [`$${w.op}`]: w.value } });
       } else {
-        filter[w.field] = { [`$${w.op}`]: w.value };
+        const existing = filter[w.field] as Record<string, unknown> | undefined;
+        filter[w.field] = { ...(existing || {}), [`$${w.op}`]: w.value };
       }
     }
 
@@ -331,10 +401,10 @@ export class QueryBuilder<T extends Record<string, unknown>> {
 
     const result = await this.client.retrieveRecords(this.table, {
       filter: Object.keys(filter).length > 0 ? JSON.stringify(filter) : undefined,
-      sort: this.orderByFields.length > 0 ? this.orderByFields.join(",") : undefined,
-      limit: this.limitCount,
-      offset: this.offsetCount,
-      fields: this.selectFields,
+      sort: countOnly ? undefined : (this.orderByFields.length > 0 ? this.orderByFields.join(",") : undefined),
+      limit: countOnly ? 0 : this.limitCount,
+      offset: countOnly ? 0 : this.offsetCount,
+      fields: countOnly ? undefined : this.selectFields,
     });
     return { data: result.data as T[], total: result.total };
   }

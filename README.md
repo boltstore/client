@@ -198,11 +198,7 @@ If you only have a per-database API key, use the `tables`, `table()`, `records`,
 
 ## Known issues
 
-These are tracked in the server's `audits.md`.
-
-- **`PaginatedResult.total` is currently broken.** `t.list()` and `QueryBuilder.count()` / `paginate()` return `total` as the *current page's row count* (capped at `limit`, default 50), **not** the total number of matching rows. The server returns the correct `meta.total`, but the SDK discards `meta` and uses `data.length`. Do not rely on `total` for pagination page-count math until `audits.md` C11.1 / H11.2 are fixed.
-- **`adminReq` return type is loose.** Methods typed as returning `T` may actually return `undefined` for empty 2xx responses. Defensive `?? []` / `?? null` at call sites is recommended until H11.3 is fixed.
-- **`QueryBuilder.where` `op` is not validated client-side.** An unsupported `op` is silently dropped by the server (the filter clause is omitted), so the query returns rows that don't match the intended filter. Stick to the supported ops listed above.
+- **`adminReq` return type is loose.** Methods typed as returning `T` may return `undefined` for empty 2xx responses. Use `?? []` / `?? null` at call sites for safety.
 
 ## Development
 
