@@ -198,7 +198,7 @@ If you only have a per-database API key, use the `tables`, `table()`, `records`,
 
 ## Known issues
 
-- **`adminReq` return type is loose.** Methods typed as returning `T` may return `undefined` for empty 2xx responses. Use `?? []` / `?? null` at call sites for safety.
+- **Server-enforced limits apply.** The server caps list results at 1000 records per request. Use `offset` with `list()` for pagination beyond this limit.
 
 ## Development
 

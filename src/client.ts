@@ -2,6 +2,14 @@ import type { ClientConfig, DatabaseInfo, HealthCheck, ApiKey, CreatedApiKey, Ta
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
+const VALID_NAME = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;
+
+function validateName(name: string, label: string): void {
+  if (!VALID_NAME.test(name)) {
+    throw new Error(`Invalid ${label}: "${name}". Use letters, numbers, and underscores (max 64 chars).`);
+  }
+}
+
 export class BoltstoreClient {
   private baseUrl: string;
   private database: string;
@@ -77,8 +85,10 @@ export class BoltstoreClient {
       if (!res) throw new Error("Empty response");
       return res;
     },
-    update: async (data: Record<string, unknown>): Promise<Record<string, unknown> | undefined> => {
-      return this.adminReq<Record<string, unknown>>("PATCH", `/api/databases/${this.database}/config`, data);
+    update: async (data: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      const res = await this.adminReq<Record<string, unknown>>("PATCH", `/api/databases/${this.database}/config`, data);
+      if (!res) throw new Error("Empty response");
+      return res;
     },
   };
 
@@ -89,14 +99,18 @@ export class BoltstoreClient {
       const res = await this.adminReq<ApiKey[]>("GET", `/api/databases/${this.database}/keys`);
       return res ?? [];
     },
-    create: async (label: string): Promise<CreatedApiKey | undefined> => {
-      return this.adminReq<CreatedApiKey>("POST", `/api/databases/${this.database}/keys`, { label });
+    create: async (label: string): Promise<CreatedApiKey> => {
+      const res = await this.adminReq<CreatedApiKey>("POST", `/api/databases/${this.database}/keys`, { label });
+      if (!res) throw new Error("Empty response");
+      return res;
     },
     revoke: async (keyId: string): Promise<void> => {
       await this.adminReq("DELETE", `/api/databases/${this.database}/keys/${keyId}`);
     },
-    rotate: async (keyId: string): Promise<{ id: string; key: string } | undefined> => {
-      return this.adminReq("POST", `/api/databases/${this.database}/keys/${keyId}/rotate`);
+    rotate: async (keyId: string): Promise<{ id: string; key: string }> => {
+      const res = await this.adminReq<{ id: string; key: string }>("POST", `/api/databases/${this.database}/keys/${keyId}/rotate`);
+      if (!res) throw new Error("Empty response");
+      return res;
     },
   };
 
@@ -108,17 +122,21 @@ export class BoltstoreClient {
       return res ?? [];
     },
     create: async (name: string, columns: ColumnDef[]): Promise<{ name: string; columns: ColumnDef[] }> => {
+      validateName(name, "table name");
       const res = await this.req<{ name: string; columns: ColumnDef[] }>("POST", `/api/databases/${this.database}/tables`, { name, columns });
       return res!;
     },
     get: async (name: string): Promise<TableSchema> => {
+      validateName(name, "table name");
       const res = await this.req<TableSchema>("GET", `/api/databases/${this.database}/tables/${name}`);
       return res!;
     },
     update: async (name: string, changes: { add_columns?: ColumnDef[]; drop_columns?: string[]; name?: string; rename_column?: { from: string; to: string } }): Promise<void> => {
+      validateName(name, "table name");
       await this.req("PATCH", `/api/databases/${this.database}/tables/${name}`, changes);
     },
     delete: async (name: string): Promise<void> => {
+      validateName(name, "table name");
       await this.req("DELETE", `/api/databases/${this.database}/tables/${name}`);
     },
   };
@@ -204,12 +222,12 @@ export class BoltstoreClient {
 
     const contentType = response.headers.get("content-type");
     if (!contentType || !contentType.includes("application/json")) {
-      throw new Error(`Expected JSON response but got "${contentType || "none"}" (${response.status}): ${text.slice(0, 200)}`);
+      throw new Error(`Expected JSON response but got "${contentType || "none"}" (${response.status})`);
     }
 
     let json: ApiResponse<T>;
     try { json = JSON.parse(text) as ApiResponse<T>; } catch {
-      throw new Error(`Invalid JSON response (${response.status}): ${text.slice(0, 200)}`);
+      throw new Error(`Invalid JSON response (${response.status})`);
     }
     if (json.error) throw new Error(json.error.message);
     return { data: json.data, meta: json.meta };
