@@ -1,4 +1,4 @@
-import type { ClientConfig, DatabaseInfo, HealthCheck, ApiKey, CreatedApiKey, TableSchema, ColumnDef, ApiResponse, PaginatedResult } from "./types";
+import type { ClientConfig, DatabaseInfo, HealthCheck, ApiKey, CreatedApiKey, TableSchema, ColumnDef, ApiResponse, PaginatedResult } from "./types.js";
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
