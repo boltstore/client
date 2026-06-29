@@ -18,7 +18,7 @@ import { BoltstoreClient } from "@boltstore/client";
 const client = new BoltstoreClient({
   url: "http://localhost:8080",
   database: "myapp",
-  key: "boltstore_...", // per-database API key, or an admin session token for admin methods
+  key: "boltstore_...", // per-database API key or admin session token
 });
 
 // Tables
@@ -44,7 +44,7 @@ const list = await posts
   .limit(10)
   .get();
 
-// Raw SQL (SELECT only for non-admin keys — see server README)
+// Raw SQL
 const rows = await client.sql<{ id: number; title: string }>(
   "SELECT id, title FROM posts WHERE views > ? ORDER BY id",
   [0],
@@ -70,22 +70,22 @@ The `key` is sent as `Authorization: Bearer <key>` on every request. Use a per-d
 ### Database operations
 
 ```typescript
-// Requires admin key/session
+// Requires API key or admin session
 await client.info(): Promise<DatabaseInfo>;       // GET /api/databases/:database
 await client.delete(): Promise<void>;             // DELETE /api/databases/:database
 await client.export(): Promise<Blob>;             // POST /api/databases/:database/export
-await BoltstoreClient.import({                    // static — POST /api/databases/import
+await BoltstoreClient.import({                    // static — POST /api/databases/import (admin only)
   url: string;
   file: Blob | File;
   name?: string;
-  key?: string;
+  key?: string;                                  // admin session token required for import
 }): Promise<DatabaseInfo>;
 ```
 
 ### Config
 
 ```typescript
-// Requires admin key/session
+// Requires API key or admin session
 await client.config.get(): Promise<Record<string, unknown>>;
 await client.config.update(data: Record<string, unknown>): Promise<Record<string, unknown>>;
 ```
@@ -93,7 +93,7 @@ await client.config.update(data: Record<string, unknown>): Promise<Record<string
 ### API keys
 
 ```typescript
-// Requires admin key/session
+// Requires API key or admin session
 await client.keys.list(): Promise<ApiKey[]>;
 await client.keys.create(label: string): Promise<CreatedApiKey>; // key is returned once
 await client.keys.rotate(keyId: string): Promise<{ id: string; key: string }>;
@@ -159,7 +159,7 @@ await q.paginate(page: number, perPage?: number): Promise<PaginatedResult<Fields
 await client.sql<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
 ```
 
-Sends `{ sql, params }` to `POST /api/databases/:database/query`. Per the server's policy, **non-admin API keys may only execute `SELECT` statements**; DDL/DML/`PRAGMA`/`ATTACH` require an admin key. See the server README's "Raw SQL endpoint" section.
+Sends `{ sql, params }` to `POST /api/databases/:database/query`. API keys can execute any SQL statement (DDL, DML, `SELECT`, `PRAGMA`, etc.). Databases in read-only mode reject writes for all keys. See the server README's "Raw SQL endpoint" section.
 
 ### Health
 
@@ -192,9 +192,7 @@ interface HealthCheck { status: string; version: string; databases: number; }
 
 ## Authentication model
 
-The SDK holds a single `key` used for every request. Methods that hit `/api/databases/*` admin routes (database `info`/`delete`/`export`, `config.*`, `keys.*`) require an **admin session token** or an admin API key. Methods that hit `/api/databases/:db/tables/*`, `/records/*`, and `/query` accept either a per-database API key or an admin credential.
-
-If you only have a per-database API key, use the `tables`, `table()`, `records`, and `sql()` methods. Calling `info()`, `keys.list()`, or `config.get()` will return `401 UNAUTHORIZED`.
+The SDK holds a single `key` used for every request. Most methods (`info`, `export`, `config.*`, `keys.*`, `tables.*`, `table()`, `sql()`) accept either a per-database API key or an admin session token. Only `import` and `delete` require admin credentials.
 
 ## Known issues
 
