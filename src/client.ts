@@ -49,8 +49,9 @@ export class BoltstoreClient {
     return res;
   }
 
-  async delete(): Promise<void> {
-    await this.adminReq("DELETE", `/api/databases/${this.database}`);
+  async delete(): Promise<{ deleted: boolean }> {
+    const res = await this.adminReq<{ deleted: boolean }>("DELETE", `/api/databases/${this.database}`);
+    return res ?? { deleted: true };
   }
 
   async export(): Promise<Blob> {
@@ -73,6 +74,11 @@ export class BoltstoreClient {
     if (config.key) headers["Authorization"] = `Bearer ${config.key}`;
     const signal = AbortSignal.timeout(config.timeout ?? 30000);
     const res = await globalThis.fetch(`${config.url.replace(/\/$/, "")}/api/databases/import`, { method: "POST", headers, body: form, signal });
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Expected JSON response from server but got ${ct || "no content-type"}: ${text.slice(0, 200)}`);
+    }
     const json = await res.json() as ApiResponse<DatabaseInfo>;
     if (json.error) throw new Error(json.error.message);
     return json.data!;
@@ -263,11 +269,13 @@ export class TableRef<T extends Record<string, unknown>> {
   ) {}
 
   async create(data: Omit<T, keyof Record<string, never>>): Promise<T> {
+    validateName(this.name, "table name");
     const res = await this.client.req<T>("POST", `/api/databases/${this.client.databaseName}/tables/${this.name}/records`, data);
     return res!;
   }
 
   async createBatch(data: T[]): Promise<T[]> {
+    validateName(this.name, "table name");
     const res = await this.client.req<T[]>("POST", `/api/databases/${this.client.databaseName}/tables/${this.name}/records`, data);
     return res!;
   }
@@ -299,8 +307,9 @@ export class TableRef<T extends Record<string, unknown>> {
     return res!;
   }
 
-  async delete(id: string | number): Promise<void> {
-    await this.client.req("DELETE", `/api/databases/${this.client.databaseName}/tables/${this.name}/records/${id}`);
+  async delete(id: string | number): Promise<{ deleted: boolean }> {
+    const res = await this.client.req<{ deleted: boolean }>("DELETE", `/api/databases/${this.client.databaseName}/tables/${this.name}/records/${id}`);
+    return res ?? { deleted: true };
   }
 
   query(): QueryBuilder<T> {
@@ -428,4 +437,3 @@ export class QueryBuilder<T extends Record<string, unknown>> {
     return { data: result.data as T[], total: result.total };
   }
 }
-
