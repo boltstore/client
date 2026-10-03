@@ -70,9 +70,9 @@ The `key` is sent as `Authorization: Bearer <key>` on every request. Use a per-d
 ### Database operations
 
 ```typescript
-// Requires API key or admin session
+// Requires API key or admin session (except delete, which requires admin)
 await client.info(): Promise<DatabaseInfo>;       // GET /api/databases/:database
-await client.delete(): Promise<void>;             // DELETE /api/databases/:database
+await client.delete(): Promise<void>;             // DELETE /api/databases/:database (admin only)
 await client.export(): Promise<Blob>;             // POST /api/databases/:database/export
 await BoltstoreClient.import({                    // static — POST /api/databases/import (admin only)
   url: string;
@@ -85,7 +85,7 @@ await BoltstoreClient.import({                    // static — POST /api/databa
 ### Config
 
 ```typescript
-// Requires API key or admin session
+// Requires API key or admin session (modifying readonly config requires admin)
 await client.config.get(): Promise<Record<string, unknown>>;
 await client.config.update(data: Record<string, unknown>): Promise<Record<string, unknown>>;
 ```
@@ -93,7 +93,7 @@ await client.config.update(data: Record<string, unknown>): Promise<Record<string
 ### API keys
 
 ```typescript
-// Requires API key or admin session
+// Requires admin session
 await client.keys.list(): Promise<ApiKey[]>;
 await client.keys.create(label: string): Promise<CreatedApiKey>; // key is returned once
 await client.keys.rotate(keyId: string): Promise<{ id: string; key: string }>;
@@ -192,7 +192,7 @@ interface HealthCheck { status: string; version: string; databases: number; }
 
 ## Authentication model
 
-The SDK holds a single `key` used for every request. Most methods (`info`, `export`, `config.*`, `keys.*`, `tables.*`, `table()`, `sql()`) accept either a per-database API key or an admin session token. Only `import` and `delete` require admin credentials.
+The SDK holds a single `key` used for every request. Most data operations (`info`, `export`, `config.get`, `tables.*`, `table()`, `sql()`) accept either a per-database API key or an admin session token. Operations like `import`, `delete`, `keys.*` management, and modifying the `readonly` flag via `config.update` require admin credentials.
 
 ## Known issues
 
